@@ -1,4 +1,7 @@
+
 # BLE SPAM 📡 — Next-Gen Spoofing Toolkit
+
+[**English**](#-overview) | [**Русский**](#-обзор)
 
 [![Platform](https://img.shields.io/badge/Android-8.0%2B-brightgreen)](https://developer.android.com)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -8,15 +11,17 @@
   <img src="./assets/logo.gif" width="200" alt="BLE Spammer Logo">
 </p>
 
-## 🚀 Overview
-**BLE SPAM** — это продвинутый инструмент для тестирования Bluetooth Low Energy (BLE) протоколов и симуляции рекламных пакетов (advertising packets). Проект базируется на исследованиях ведущих специалистов в области мобильной безопасности и адаптирован для работы на современных Android-устройствах.
+---
 
-Основано на работах:
+## 🚀 Overview
+**BLE SPAM** is an advanced toolkit for testing Bluetooth Low Energy (BLE) protocols and simulating advertising packets. The project is based on cutting-edge research in mobile security and is optimized for modern Android devices.
+
+**Based on the works of:**
 - [Willy-JL](https://github.com/Willy-JL)
 - [Spooks4576](https://github.com/Spooks4576) 
 - [ECTO-1A](https://github.com/ECTO-1A)
 
-### Поддерживаемые платформы (Target):
+### Supported Platforms (Target):
 <img src="https://img.shields.io/badge/iOS-17+-000000?style=flat&logo=apple" alt="iOS"> <img src="https://img.shields.io/badge/Android-8.0+-3DDC84?style=flat&logo=android" alt="Android"> <img src="https://img.shields.io/badge/Windows-10+-0078D6?style=flat&logo=windows" alt="Windows">
 
 ---
@@ -32,32 +37,20 @@
 | 💻 **Microsoft Swift** | Windows 10/11      | Custom Pairing ✨    |
 
 ### Key Capabilities
-* **195+ Пресетов:** Готовые профили популярных устройств (AirPods, Pixel Buds, Watch и др.).
-* **Тайминги:** Точная настройка интервалов рекламы (от 20мс до 2000мс).
-* **Multi-Chaining:** Возможность запуска нескольких протоколов одновременно.
-* **Native Security:** Ядро защиты и сетевые эндпоинты вынесены в C++ (JNI) для затруднения анализа.
-* **Crash Analytics:** Модуль отслеживания эффективности атак.
+* **195+ Presets:** Ready-to-use profiles for popular devices (AirPods, Pixel Buds, Galaxy Watch, etc.).
+* **Timing Control:** Precise adjustment of advertising intervals (from 20ms to 2000ms).
+* **Multi-Chaining:** Ability to run multiple protocols simultaneously.
+* **Native Security:** Protection core and API endpoints are implemented in C++ (JNI) to prevent easy reverse engineering.
+* **Crash Analytics:** Module for tracking attack effectiveness.
 
 ---
 
-## ⚙️ System Requirements
-```yaml
-min_android: 8.0 (API 26)
-recommended_ram: 2GB+
-bluetooth: LE 4.2+ (поддержка Extended Advertising приветствуется)
-storage: 15MB free
-```
+## 🛠 Setup & Self-Hosting
 
----
+To ensure project security, all API keys and private endpoints have been removed from the public source code. To build a functional app, follow these steps:
 
-## 🛠 Сборка и Настройка (Self-Hosting)
-
-Для обеспечения безопасности проекта, все API-ключи и эндпоинты удалены из публичного кода. Чтобы собрать рабочее приложение, выполните следующие шаги:
-
-### 1. Конфигурация Firebase
-
-Поместите ваш `google-services.json` в папку `app/`. Шаблон файла:
-
+### 1. Firebase Configuration
+Place your `google-services.json` in the `app/` folder. Template:
 ```json
 {
   "project_info": { "project_id": "your-id" },
@@ -66,15 +59,15 @@ storage: 15MB free
 
 ```
 
-### 2. Настройка Native Layer (C++)
+### 2. Native Layer Setup (C++)
 
-Отредактируйте файл `app/src/main/cpp/native-lib.cpp`:
+Edit `app/src/main/cpp/native-lib.cpp`:
 
-1. Вставьте свой XOR-ключ в переменные `K1-K6`.
-2. Добавьте зашифрованные HEX-байты ваших API-адресов в массивы `D1-D7`.
-3. Обновите пути JNI функций в соответствии с вашим `package_name`.
+1. Insert your XOR key into variables `K1-K6`.
+2. Add your encrypted HEX bytes for API addresses into arrays `D1-D7`.
+3. Update JNI function paths to match your `package_name`.
 
-### 3. Компиляция
+### 3. Compilation
 
 ```bash
 ./gradlew assembleRelease
@@ -85,22 +78,10 @@ storage: 15MB free
 
 ## ⚠️ Disclaimer
 
-Данный инструмент предназначен исключительно для **образовательных целей** и тестирования на проникновение в рамках санкционированного аудита безопасности. Автор не несет ответственности за любой ущерб, причиненный использованием данного ПО.
-
-**Используйте ответственно!**
-
----
-
-## 🤝 Contribution
-
-Если у вас есть новые BLE-дампы или идеи по улучшению протоколов:
-
-1. Fork проекта.
-2. Создайте ветку `feature/new-protocol`.
-3. Сделайте Pull Request.
+This tool is intended for **educational purposes** and authorized security auditing only. The author is not responsible for any damage caused by the use of this software. **Use responsibly!**
 
 ---
 
 <p align="center">
-Разработано с ❤️ для комьюнити BLE-исследователей.
+Developed with ❤️ for the BLE research community.
 </p>
