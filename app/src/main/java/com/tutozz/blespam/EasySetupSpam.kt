@@ -87,7 +87,22 @@ class EasySetupSpam(private val type: EasySetupDevice.type) : Spammer {
                 EasySetupDevice("0x27", "Mystic Purple Watch6", EasySetupDevice.type.WATCH),
                 EasySetupDevice("0x28", "Golden Watch6", EasySetupDevice.type.WATCH),
                 EasySetupDevice("0x29", "Forest Green Watch6", EasySetupDevice.type.WATCH),
-                EasySetupDevice("0x2A", "Sunset Orange Watch6", EasySetupDevice.type.WATCH)
+                EasySetupDevice("0x2A", "Sunset Orange Watch6", EasySetupDevice.type.WATCH),
+                // Galaxy Watch 7 (2024)
+                EasySetupDevice("0x30", "Black Galaxy Watch7 44mm", EasySetupDevice.type.WATCH),
+                EasySetupDevice("0x31", "Green Galaxy Watch7 44mm", EasySetupDevice.type.WATCH),
+                EasySetupDevice("0x32", "Cream Galaxy Watch7 40mm", EasySetupDevice.type.WATCH),
+                EasySetupDevice("0x33", "Green Galaxy Watch7 40mm", EasySetupDevice.type.WATCH),
+                EasySetupDevice("0x34", "White Galaxy Watch7 Classic", EasySetupDevice.type.WATCH),
+                EasySetupDevice("0x35", "Black Galaxy Watch7 Classic", EasySetupDevice.type.WATCH),
+                // Galaxy Watch Ultra (2024)
+                EasySetupDevice("0x40", "Titanium White Watch Ultra", EasySetupDevice.type.WATCH),
+                EasySetupDevice("0x41", "Titanium Black Watch Ultra", EasySetupDevice.type.WATCH),
+                EasySetupDevice("0x42", "Titanium Silver Watch Ultra", EasySetupDevice.type.WATCH),
+                // Galaxy Ring (2024)
+                EasySetupDevice("0x60", "Black Galaxy Ring", EasySetupDevice.type.WATCH),
+                EasySetupDevice("0x61", "Gold Galaxy Ring", EasySetupDevice.type.WATCH),
+                EasySetupDevice("0x62", "Silver Galaxy Ring", EasySetupDevice.type.WATCH)
             )
         }
 

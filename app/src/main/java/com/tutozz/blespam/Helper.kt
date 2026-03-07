@@ -15,6 +15,55 @@ object Helper {
     val delays = intArrayOf(10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 6000, 8000, 10000, 12000, 15000, 18000, 20000)
     const val MAX_LOOP = 50_000_000
 
+    /** Whether to use concurrent Extended Advertising sets (Android 8+ only). */
+    var concurrentMode = false
+    var useExtendedAdvertising = true
+    var hardwareExtendedBroken: Boolean = false
+
+    private const val PREF_NAME = "AppSettings"
+    private const val KEY_DELAY = "spam_delay"
+    private const val KEY_CONCURRENT = "concurrent_mode"
+
+    fun saveDelay(context: Context) {
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit().putInt(KEY_DELAY, delay).apply()
+    }
+
+    fun loadDelay(context: Context) {
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        delay = prefs.getInt(KEY_DELAY, 20)
+        concurrentMode = prefs.getBoolean(KEY_CONCURRENT, false)
+        useExtendedAdvertising = prefs.getBoolean("extended_advertising_enabled", true)
+    }
+
+    fun canUseExtendedAdvertising(): Boolean {
+        if (hardwareExtendedBroken) {
+            log("canUseExtendedAdvertising: false (hardwareExtendedBroken=true)")
+            return false
+        }
+        val adapter = BluetoothHelper.bluetoothAdapter
+        val isSupported = useExtendedAdvertising &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                adapter?.isLeExtendedAdvertisingSupported == true &&
+                (adapter.getLeMaximumAdvertisingDataLength() >= 62)
+        
+        if (!useExtendedAdvertising) {
+            log("canUseExtendedAdvertising: false (disabled by user)")
+        } else if (isSupported) {
+            log("canUseExtendedAdvertising: true")
+        } else {
+            log("canUseExtendedAdvertising: false (hardware/SDK limitation)")
+        }
+        
+        return isSupported
+    }
+
+    fun saveConcurrentMode(context: Context, enabled: Boolean) {
+        concurrentMode = enabled
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_CONCURRENT, enabled).apply()
+    }
+
     @RequiresApi(Build.VERSION_CODES.S)
     fun isPermissionGranted(c: Context): Boolean {
         return (ActivityCompat.checkSelfPermission(c, Manifest.permission.BLUETOOTH_ADVERTISE) == PackageManager.PERMISSION_GRANTED) &&

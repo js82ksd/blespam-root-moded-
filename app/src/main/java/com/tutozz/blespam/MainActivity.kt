@@ -1,15 +1,12 @@
 package com.tutozz.blespam
 
 import android.Manifest
-import android.R.color.black
-import android.R.color.system_accent1_500
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.bluetooth.BluetoothAdapter
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.content.res.Configuration
@@ -45,7 +42,6 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import java.io.InputStream
 import java.net.URL
 import androidx.core.app.ActivityCompat
 import okhttp3.OkHttpClient
@@ -57,9 +53,18 @@ import com.tutozz.blespam.R
 import com.google.android.material.button.MaterialButton
 import android.graphics.Color
 import androidx.annotation.AttrRes
-import android.content.BroadcastReceiver
+import com.google.firebase.messaging.FirebaseMessaging
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.analytics.FirebaseAnalytics
+import com.google.firebase.analytics.ktx.analytics
+import com.google.firebase.analytics.ktx.logEvent
+import com.google.firebase.ktx.Firebase
+import com.google.firebase.database.DatabaseException
+
 
 class MainActivity : AppCompatActivity() {
+
+    private lateinit var firebaseAnalytics: FirebaseAnalytics
 
     private val spammerList = mutableListOf<Spammer>()
     private lateinit var sharedPref: android.content.SharedPreferences
@@ -67,10 +72,11 @@ class MainActivity : AppCompatActivity() {
     private val progressHandler = Handler(Looper.getMainLooper())
     private val socialLink get() = AppConfig.SOCIAL_LINK
     private val versionCheckApi get() = AppConfig.VERSION_CHECK_API
+    private val ruStoreAppUrl = "https://www.rustore.ru/catalog/app/com.tutozz.blespam"
+    private val useRuStoreForUpdates = false
     private val noOpRunnable = Runnable {}
 
     private var vibrator: Vibrator? = null
-
     private var isBluetoothRequestPending = false
 
     private val blinkHandler = Handler(Looper.getMainLooper())
@@ -85,7 +91,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var appleNotYourDevicePopupCircle: ImageView
     private lateinit var vzhuhSpamButton: MaterialButton
     private lateinit var vzhuhSpamCircle: ImageView
-
     private lateinit var androidFastPairButton: MaterialButton
     private lateinit var androidFastPairCircle: ImageView
     private lateinit var xiaomiQuickConnectButton: MaterialButton
@@ -96,12 +101,21 @@ class MainActivity : AppCompatActivity() {
     private lateinit var samsungEasyPairWatchCircle: ImageView
     private lateinit var windowsSwiftPairButton: MaterialButton
     private lateinit var windowsSwiftPairCircle: ImageView
+    private lateinit var YandexButton: MaterialButton
+    private lateinit var YandexCircle: ImageView
     private lateinit var minusDelayButton: MaterialButton
     private lateinit var plusDelayButton: MaterialButton
     private lateinit var delayText: TextView
+
     @Volatile
     private var uiLockedAfterStop = false
+    private var isBetaDialogShownInSession = false
 
+    private val handlers = mutableListOf<Handler>()
+
+    private fun createHandler(): Handler {
+        return Handler(Looper.getMainLooper()).also { handlers.add(it) }
+    }
 
     private val okHttpClient by lazy {
         OkHttpClient.Builder()
@@ -111,8 +125,15 @@ class MainActivity : AppCompatActivity() {
             .build()
     }
 
-    private val enableBluetoothLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+    private val enableBluetoothLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
         Log.d("BLESpam", "Bluetooth enable result: ${result.resultCode}")
+
+        firebaseAnalytics.logEvent("bluetooth_enable_result") {
+            param("granted", if (result.resultCode == RESULT_OK) "yes" else "no")
+        }
+
         isBluetoothRequestPending = false
         if (result.resultCode == RESULT_OK) {
             Toast.makeText(this, getString(R.string.bluetoothon), Toast.LENGTH_SHORT).show()
@@ -121,7 +142,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val installPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+    private val installPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && packageManager.canRequestPackageInstalls()) {
             val uriString = sharedPref.getString("pending_apk_uri", null)
             if (uriString != null) {
@@ -136,12 +159,623 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    fun openSocialLink(@Suppress("UNUSED_PARAMETER") view: View) {
+    @RequiresApi(Build.VERSION_CODES.M)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        sharedPref = getSharedPreferences("AppSettings", Context.MODE_PRIVATE)
+        NotificationAudienceHelper.syncLanguageAndCountry(
+            sharedPref,
+            sharedPref.getString("language", null)
+        )
+        val theme = sharedPref.getString("theme", "auto") ?: "auto"
+        setAppTheme(theme)
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        // 1. ИНИЦИАЛИЗАЦИЯ UI ЭЛЕМЕНТОВ СРАЗУ ПОСЛЕ setContentView
+        logo = findViewById(R.id.logo)
+
+        firebaseAnalytics = Firebase.analytics
+        firebaseAnalytics.logEvent(FirebaseAnalytics.Event.APP_OPEN) {
+            param(FirebaseAnalytics.Param.METHOD, "normal_launch")
+        }
+
+        setUserProperties()
+        Log.d("BLESpam", "MainActivity onCreate - Analytics initialized")
+
+        createHandler().postDelayed({
+            initializeFirebaseMessaging()
+        }, 2000)
+
+        val bugButton = findViewById<ImageView>(R.id.settingsButton)
+        bugButton.setOnClickListener {
+            firebaseAnalytics.logEvent("settings_opened") {
+                param(FirebaseAnalytics.Param.SCREEN_NAME, "Settings")
+            }
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
+
+        val requiredPermissions = getRequiredPermissions().toMutableList()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            requiredPermissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        val permissionsToRequest = requiredPermissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }.toTypedArray()
+
+        if (permissionsToRequest.isNotEmpty()) {
+            Log.d("BLESpam", "Запрашиваем разрешения: ${permissionsToRequest.contentToString()}")
+            ActivityCompat.requestPermissions(this, permissionsToRequest, REQUEST_ALL_PERMISSIONS)
+        } else {
+            checkForNewVersion()
+            completeInitialization()
+        }
+
+        createHandler().postDelayed({
+        }, 500)
+
+        applyThemeColor()
+    }
+
+    private fun initializeFirebaseMessaging() {
+        if (!isNetworkAvailable()) {
+            Log.w("BLESpam", "No internet connection, token will be fetched later")
+            return
+        }
+
+        fetchFCMToken()
+    }
+
+    private fun fetchFCMToken(retryCount: Int = 0) {
+        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+            if (!task.isSuccessful) {
+                val exception = task.exception
+                Log.w("BLESpam", "FCM token fetch failed (attempt ${retryCount + 1})", exception)
+
+                // Analytics: Token fetch failed
+                firebaseAnalytics.logEvent("fcm_token_fetch_failed") {
+                    param("attempt", retryCount.toLong())
+                    param("error", exception?.message ?: "unknown")
+                }
+
+                // Повторная попытка через 5 секунд (максимум 3 попытки)
+                if (retryCount < 3) {
+                    createHandler().postDelayed({
+                        fetchFCMToken(retryCount + 1)
+                    }, 5000)
+                } else {
+                    runOnUiThread {
+                        Toast.makeText(
+                            this,
+                            "Не удалось получить FCM токен. Проверьте интернет и Google Play Services",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+                return@addOnCompleteListener
+            }
+
+            val token = task.result
+            Log.d("BLESpam", "FCM Token: $token")
+
+            // Analytics: Token received
+            firebaseAnalytics.logEvent("fcm_token_received") {
+                param("success", "yes")
+            }
+
+            sharedPref.edit().putString("fcm_token", token).apply()
+            saveTokenToFirebase(token)
+
+            runOnUiThread {
+                Toast.makeText(this, "Push уведомления активированы", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun saveTokenToFirebase(token: String) {
+        val deviceId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
+        val language = NotificationAudienceHelper.getSelectedLanguage(this)
+        val country = NotificationAudienceHelper.getSelectedCountry(this)
+
         try {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(socialLink))
-            startActivity(intent)
-        } catch (@Suppress("UNUSED_PARAMETER") e: ActivityNotFoundException) {
-            Toast.makeText(this, getString(R.string.no_browser_found), Toast.LENGTH_SHORT).show()
+            val database = FirebaseDatabase.getInstance(AppConfig.FIREBASE_DB_URL)
+            val tokensRef = database.getReference("fcm_tokens")
+
+            val tokenData = mapOf(
+                "token" to token,
+                "device_id" to deviceId,
+                "timestamp" to System.currentTimeMillis(),
+                "app_version" to getAppVersion(),
+                "device_model" to Build.MODEL,
+                "android_version" to Build.VERSION.RELEASE,
+                "language" to language,
+                "country" to country
+            )
+
+            tokensRef.child(deviceId).setValue(tokenData)
+                .addOnSuccessListener {
+                    Log.d("BLESpam", "Token saved to Firebase Database")
+
+                    // Analytics: Token saved
+                    firebaseAnalytics.logEvent("fcm_token_saved") {
+                        param("database", "firebase")
+                    }
+                }
+                .addOnFailureListener { exception: Exception ->
+                    Log.e("BLESpam", "Failed to save token", exception)
+
+                    // Analytics: Token save failed
+                    firebaseAnalytics.logEvent("fcm_token_save_failed") {
+                        param("error", exception.message ?: "unknown")
+                    }
+                }
+        } catch (e: Exception) {
+            Log.e("BLESpam", "Firebase Database error: ${e.message}", e)
+
+            firebaseAnalytics.logEvent("firebase_db_error") {
+                param("error", e.message ?: "unknown")
+            }
+        }
+    }
+
+
+
+    private fun setUserProperties() {
+        firebaseAnalytics.setUserProperty("app_version", getAppVersion())
+        firebaseAnalytics.setUserProperty("device_model", Build.MODEL)
+        firebaseAnalytics.setUserProperty("android_version", Build.VERSION.RELEASE)
+
+        val vibrationEnabled = sharedPref.getBoolean("vibration_enabled", true)
+        firebaseAnalytics.setUserProperty("vibration_setting", vibrationEnabled.toString())
+
+        val colorMode = sharedPref.getString("color_mode", "material") ?: "material"
+        firebaseAnalytics.setUserProperty("color_mode", colorMode)
+
+        val logoAnimation = sharedPref.getBoolean("logo_animation", false)
+        firebaseAnalytics.setUserProperty("logo_animation", logoAnimation.toString())
+
+        Log.d("BLESpam", "User properties set")
+    }
+
+    override fun onPause() {
+        super.onPause()
+
+        if (::logo.isInitialized) {
+            (logo.drawable as? AnimationDrawable)?.stop()
+        }
+
+        // Остановить мигание
+        blinkHandler.removeCallbacksAndMessages(null)
+    }
+
+    private fun logAppOpen() {
+        firebaseAnalytics.logEvent(FirebaseAnalytics.Event.APP_OPEN) {
+            param(FirebaseAnalytics.Param.METHOD, "normal_launch")
+        }
+        Log.d("BLESpam", "Analytics: App opened")
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.action == StopSpamReceiver.ACTION_UI_STOPPED) {
+            Log.d("BLESpam", "onNewIntent: ACTION_UI_STOPPED received")
+            createHandler().postDelayed({
+                forceResetAllUI()
+            }, 100)
+        }
+    }
+
+    private fun forceResetAllUI() {
+        Log.d("BLESpam", "forceResetAllUI: starting")
+        blinkHandler.removeCallbacksAndMessages(null)
+        spammerList.forEach {
+            it.getBlinkRunnable()?.let { r -> blinkHandler.removeCallbacks(r) }
+            it.setBlinkRunnable(null)
+        }
+        spammerList.clear()
+
+        val buttons = listOf(
+            ios17CrashButton to ios17CrashCircle,
+            appleActionModalButton to appleActionModalCircle,
+            appleDevicePopupButton to appleDevicePopupCircle,
+            appleNotYourDevicePopupButton to appleNotYourDevicePopupCircle,
+            vzhuhSpamButton to vzhuhSpamCircle,
+            androidFastPairButton to androidFastPairCircle,
+            xiaomiQuickConnectButton to xiaomiQuickConnectCircle,
+            samsungEasyPairBudsButton to samsungEasyPairBudsCircle,
+            samsungEasyPairWatchButton to samsungEasyPairWatchCircle,
+            windowsSwiftPairButton to windowsSwiftPairCircle,
+            YandexButton to YandexCircle
+        )
+
+        buttons.forEach { (button, circle) ->
+            circle.setImageResource(R.drawable.grey_circle)
+            circle.imageTintList = null
+            circle.clearColorFilter()
+            circle.visibility = View.VISIBLE
+            val strokeColor = resolveAttrColor(android.R.attr.textColorSecondary)
+            button.icon = null
+            button.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+            button.setTextColor(strokeColor)
+            try {
+                button.strokeWidth = 3
+                button.setStrokeColor(ColorStateList.valueOf(strokeColor))
+            } catch (e: Throwable) {
+                Log.e("BLESpam", "Error setting stroke: ${e.message}")
+            }
+        }
+        updateLogoAnimation()
+        Log.d("BLESpam", "forceResetAllUI: complete")
+    }
+
+    private fun resetButtonUI(button: MaterialButton, circle: ImageView) {
+        circle.setImageResource(R.drawable.grey_circle)
+        circle.imageTintList = null
+        circle.clearColorFilter()
+        circle.visibility = View.VISIBLE
+        val strokeColor = resolveAttrColor(android.R.attr.textColorSecondary)
+        button.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+        button.setTextColor(strokeColor)
+        try {
+            button.setStrokeColor(ColorStateList.valueOf(strokeColor))
+            button.strokeWidth = resources.getDimensionPixelSize(R.dimen.button_stroke_width).takeIf { it > 0 } ?: 3
+        } catch (_: Throwable) {}
+        button.invalidate()
+        button.requestLayout()
+    }
+
+    override fun onStart() {
+        super.onStart()
+    }
+
+    override fun onStop() {
+        super.onStop()
+    }
+
+    private fun applyInactiveStyle(button: MaterialButton, circle: ImageView) {
+        circle.setImageResource(R.drawable.grey_circle)
+        circle.imageTintList = null
+        circle.clearColorFilter()
+        circle.visibility = View.VISIBLE
+        val strokeColor = resolveAttrColor(android.R.attr.textColorSecondary)
+        button.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+        try { button.setStrokeColor(ColorStateList.valueOf(strokeColor)) } catch (_: Throwable) {}
+        button.setTextColor(strokeColor)
+    }
+
+    private fun resetAllSpammerButtonsUi() {
+        blinkHandler.removeCallbacksAndMessages(null)
+        spammerList.forEach {
+            it.getBlinkRunnable()?.let { r -> blinkHandler.removeCallbacks(r) }
+            it.setBlinkRunnable(null)
+        }
+        spammerList.clear()
+        applyInactiveStyle(ios17CrashButton, ios17CrashCircle)
+        applyInactiveStyle(appleActionModalButton, appleActionModalCircle)
+        applyInactiveStyle(appleDevicePopupButton, appleDevicePopupCircle)
+        applyInactiveStyle(appleNotYourDevicePopupButton, appleNotYourDevicePopupCircle)
+        applyInactiveStyle(vzhuhSpamButton, vzhuhSpamCircle)
+        applyInactiveStyle(androidFastPairButton, androidFastPairCircle)
+        applyInactiveStyle(xiaomiQuickConnectButton, xiaomiQuickConnectCircle)
+        applyInactiveStyle(samsungEasyPairBudsButton, samsungEasyPairBudsCircle)
+        applyInactiveStyle(samsungEasyPairWatchButton, samsungEasyPairWatchCircle)
+        applyInactiveStyle(windowsSwiftPairButton, windowsSwiftPairCircle)
+        applyInactiveStyle(YandexButton, YandexCircle)
+        updateLogoAnimation()
+    }
+
+    private fun initializeViews() {
+        vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            vibratorManager.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        }
+
+        logo = findViewById(R.id.logo)
+        ios17CrashButton = findViewById(R.id.ios17CrashButton)
+        ios17CrashCircle = findViewById(R.id.ios17CrashCircle)
+        appleActionModalButton = findViewById(R.id.appleActionModalButton)
+        appleActionModalCircle = findViewById(R.id.appleActionModalCircle)
+        appleDevicePopupButton = findViewById(R.id.appleDevicePopupButton)
+        appleDevicePopupCircle = findViewById(R.id.appleDevicePopupCircle)
+        appleNotYourDevicePopupButton = findViewById(R.id.appleNotYourDevicePopupButton)
+        appleNotYourDevicePopupCircle = findViewById(R.id.appleNotYourDevicePopupCircle)
+        vzhuhSpamButton = findViewById(R.id.vzhuhSpamButton)
+        vzhuhSpamCircle = findViewById(R.id.vzhuhSpamCircle)
+        androidFastPairButton = findViewById(R.id.androidFastPairButton)
+        androidFastPairCircle = findViewById(R.id.androidFastPairCircle)
+        samsungEasyPairBudsButton = findViewById(R.id.samsungEasyPairBudsButton)
+        samsungEasyPairBudsCircle = findViewById(R.id.samsungEasyPairBudsCircle)
+        xiaomiQuickConnectButton = findViewById(R.id.XiaomiQuickConnectButton)
+        xiaomiQuickConnectCircle = findViewById(R.id.XiaomiQuickConnectCircle)
+        samsungEasyPairWatchButton = findViewById(R.id.samsungEasyPairWatchButton)
+        samsungEasyPairWatchCircle = findViewById(R.id.samsungEasyPairWatchCircle)
+        windowsSwiftPairButton = findViewById(R.id.windowsSwiftPairButton)
+        windowsSwiftPairCircle = findViewById(R.id.windowsSwiftPairCircle)
+        YandexButton = findViewById(R.id.YandexButton)
+        YandexCircle = findViewById(R.id.YandexCircle)
+        minusDelayButton = findViewById(R.id.minusDelayButton)
+        plusDelayButton = findViewById(R.id.plusDelayButton)
+        delayText = findViewById(R.id.delayText)
+    }
+
+    private fun getRequiredPermissions(): Array<String> {
+        val list = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            list.add(Manifest.permission.BLUETOOTH_ADVERTISE)
+            list.add(Manifest.permission.BLUETOOTH_CONNECT)
+            list.add(Manifest.permission.BLUETOOTH_SCAN)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            list.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        return list.toTypedArray()
+    }
+
+    private fun completeInitialization() {
+        if (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                Helper.isPermissionGranted(this)
+            } else {
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.ACCESS_FINE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+            }
+        ) {
+            // Restore persisted delay and concurrent mode
+            Helper.loadDelay(this)
+            initializeViews()
+            initializeSpamButtons()
+            restoreSpammerUiState()
+            setupDelayButtons()
+        }
+    }
+
+    private fun restoreSpammerUiState() {
+        try {
+            val mapping = listOf(
+                Triple("iOS Crash", ios17CrashButton to ios17CrashCircle, { ContinuitySpam(ContinuityType.ACTION, true) }),
+                Triple("Apple Action Modal", appleActionModalButton to appleActionModalCircle, { ContinuitySpam(ContinuityType.ACTION, false) }),
+                Triple("Apple Device Popup", appleDevicePopupButton to appleDevicePopupCircle, { ContinuitySpam(ContinuityType.DEVICE, false) }),
+                Triple("Apple 'Not Your Device'", appleNotYourDevicePopupButton to appleNotYourDevicePopupCircle, { ContinuitySpam(ContinuityType.NOTYOURDEVICE, false) }),
+                Triple("Vzhuh Spam", vzhuhSpamButton to vzhuhSpamCircle, { VzhuhSpam() }),
+                Triple("Android Fast Pair", androidFastPairButton to androidFastPairCircle, { FastPairSpam() }),
+                Triple("Xiaomi Quick Connect", xiaomiQuickConnectButton to xiaomiQuickConnectCircle, { XiaomiQuickConnect() }),
+                Triple("Samsung Buds", samsungEasyPairBudsButton to samsungEasyPairBudsCircle, { EasySetupSpam(EasySetupDevice.type.BUDS) }),
+                Triple("Samsung Watch", samsungEasyPairWatchButton to samsungEasyPairWatchCircle, { EasySetupSpam(EasySetupDevice.type.WATCH) }),
+                Triple("Windows Swift Pair", windowsSwiftPairButton to windowsSwiftPairCircle, { SwiftPairSpam() }),
+                Triple("Yandex", YandexButton to YandexCircle, { YandexSpam() })
+            )
+
+            for (item in mapping) {
+                val (name, views, factory) = item
+                val (button, circle) = views
+                val isRunning = try {
+                    SpamService.isSpammerRunning(name)
+                } catch (e: Exception) {
+                    Log.w("BLESpam", "isSpammerRunning error for $name: ${e.message}")
+                    false
+                }
+
+                if (isRunning) {
+                    val spammer = try {
+                        factory.invoke()
+                    } catch (e: Exception) {
+                        Log.e("BLESpam", "Failed to create spammer $name", e)
+                        continue
+                    }
+
+                    if (!spammerList.contains(spammer)) spammerList.add(spammer)
+                    runOnUiThread {
+                        circle.setImageResource(R.drawable.active_circle)
+                        circle.visibility = View.VISIBLE
+                        applyActiveCircleColor(circle)
+                        val buttonColor = getButtonColor()
+                        val textColor = getContrastColor(buttonColor)
+                        button.backgroundTintList = ColorStateList.valueOf(buttonColor)
+                        try { button.setStrokeColor(ColorStateList.valueOf(buttonColor)) } catch (_: Throwable) {}
+                        button.setTextColor(textColor)
+                        val blink = startBlinking(circle, spammer, button)
+                        spammer.setBlinkRunnable(blink)
+                    }
+                }
+            }
+            applyThemeColor()
+        } catch (e: Exception) {
+            Log.e("BLESpam", "restoreSpammerUiState failed", e)
+        }
+    }
+
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 4)
+            }
+        }
+    }
+
+    private fun setAppTheme(theme: String) {
+        when (theme) {
+            "light" -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
+            "dark" -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
+            else -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
+        }
+    }
+
+    private fun isAppInDarkTheme(): Boolean {
+        return when (AppCompatDelegate.getDefaultNightMode()) {
+            AppCompatDelegate.MODE_NIGHT_YES -> true
+            AppCompatDelegate.MODE_NIGHT_NO -> false
+            AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM -> {
+                (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+            }
+            else -> {
+                (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+            }
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val bugButton: ImageView = findViewById(R.id.settingsButton)
+        val isDarkTheme = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        bugButton.setImageResource(if (isDarkTheme) R.mipmap.ic_menu_night else R.mipmap.ic_menu)
+        applyThemeColor()
+    }
+
+    private fun initializeSpamButtons() {
+        try {
+            onClickSpamButton(ContinuitySpam(ContinuityType.ACTION, true), "iOS Crash", ios17CrashButton, ios17CrashCircle)
+            onClickSpamButton(ContinuitySpam(ContinuityType.ACTION, false), "Apple Action Modal", appleActionModalButton, appleActionModalCircle)
+            onClickSpamButton(ContinuitySpam(ContinuityType.DEVICE, false), "Apple Device Popup", appleDevicePopupButton, appleDevicePopupCircle)
+            onClickSpamButton(ContinuitySpam(ContinuityType.NOTYOURDEVICE, false), "Apple 'Not Your Device'", appleNotYourDevicePopupButton, appleNotYourDevicePopupCircle)
+            onClickSpamButton(VzhuhSpam(), "Vzhuh Spam", vzhuhSpamButton, vzhuhSpamCircle)
+            onClickSpamButton(FastPairSpam(), "Android Fast Pair", androidFastPairButton, androidFastPairCircle)
+            onClickSpamButton(XiaomiQuickConnect(), "Xiaomi Quick Connect", xiaomiQuickConnectButton, xiaomiQuickConnectCircle)
+            onClickSpamButton(EasySetupSpam(EasySetupDevice.type.BUDS), "Samsung Buds", samsungEasyPairBudsButton, samsungEasyPairBudsCircle)
+            onClickSpamButton(EasySetupSpam(EasySetupDevice.type.WATCH), "Samsung Watch", samsungEasyPairWatchButton, samsungEasyPairWatchCircle)
+            onClickSpamButton(SwiftPairSpam(), "Windows Swift Pair", windowsSwiftPairButton, windowsSwiftPairCircle)
+            onClickSpamButton(YandexSpam(), "Yandex", YandexButton, YandexCircle)
+        } catch (@Suppress("UNUSED_PARAMETER") e: IOException) {
+            Toast.makeText(this, getString(R.string.swiftpair), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun setupDelayButtons() {
+        minusDelayButton.setOnClickListener {
+            val i = Helper.delays.indexOf(Helper.delay)
+            if (i > 0) {
+                Helper.delay = Helper.delays[i - 1]
+                delayText.text = getString(R.string.delay_text, Helper.delay)
+                Helper.saveDelay(this)
+
+                // Analytics: Delay changed
+                firebaseAnalytics.logEvent("delay_changed") {
+                    param("new_delay_ms", Helper.delay.toLong())
+                    param("direction", "decreased")
+                }
+            }
+        }
+
+        plusDelayButton.setOnClickListener {
+            val i = Helper.delays.indexOf(Helper.delay)
+            if (i < Helper.delays.size - 1) {
+                Helper.delay = Helper.delays[i + 1]
+                delayText.text = getString(R.string.delay_text, Helper.delay)
+                Helper.saveDelay(this)
+
+                // Analytics: Delay changed
+                firebaseAnalytics.logEvent("delay_changed") {
+                    param("new_delay_ms", Helper.delay.toLong())
+                    param("direction", "increased")
+                }
+            }
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.M)
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        when (requestCode) {
+            REQUEST_ALL_PERMISSIONS -> {
+                val deniedPermissions = mutableListOf<String>()
+                permissions.forEachIndexed { index, permission ->
+                    if (grantResults.getOrNull(index) != PackageManager.PERMISSION_GRANTED) {
+                        deniedPermissions.add(permission)
+                    }
+                }
+
+                if (deniedPermissions.isEmpty()) {
+                    Log.d("BLESpam", "Все разрешения получены.")
+
+                    // Analytics: All permissions granted
+                    firebaseAnalytics.logEvent("all_permissions_granted") {
+                        param("count", permissions.size.toLong())
+                    }
+
+                    createHandler().postDelayed({
+                    }, 500)
+                    checkForNewVersion()
+                    completeInitialization()
+                } else {
+                    Log.w("BLESpam", "Отклонены следующие разрешения: ${deniedPermissions.joinToString(", ")}")
+
+                    // Analytics: Permissions denied
+                    firebaseAnalytics.logEvent("permissions_denied") {
+                        param("denied_count", deniedPermissions.size.toLong())
+                        param("denied_list", deniedPermissions.joinToString(","))
+                    }
+
+                    Toast.makeText(
+                        this,
+                        if (deniedPermissions.any { it == Manifest.permission.POST_NOTIFICATIONS }) {
+                            getString(R.string.notifications_permission_required)
+                        } else {
+                            getString(R.string.permissions_denied)
+                        },
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+            2 -> {
+                val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+
+                // Analytics: Bluetooth permission result
+                firebaseAnalytics.logEvent("permission_result") {
+                    param("permission_type", "bluetooth")
+                    param("granted", if (granted) "yes" else "no")
+                }
+
+                if (granted) {
+                    Log.d("BLESpam", "Bluetooth permission granted, checking if enabled")
+                    if (!checkBluetoothEnabled()) {
+                        createHandler().postDelayed({
+                            promptToEnableBluetooth()
+                        }, 200)
+                    }
+                } else {
+                    Log.w("BLESpam", "Bluetooth permission denied")
+                    Toast.makeText(this, getString(R.string.bluetooth_permission_required), Toast.LENGTH_SHORT).show()
+                }
+            }
+            3 -> {
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    Log.d("BLESpam", "Storage permission granted")
+                    Toast.makeText(this, getString(R.string.storage_permission_granted), Toast.LENGTH_SHORT).show()
+                } else {
+                    Log.w("BLESpam", "Storage permission denied")
+                    Toast.makeText(this, getString(R.string.storage_permission_denied), Toast.LENGTH_SHORT).show()
+                }
+            }
+            4 -> {
+                val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+
+                // Analytics: Notification permission result
+                firebaseAnalytics.logEvent("permission_result") {
+                    param("permission_type", "notification")
+                    param("granted", if (granted) "yes" else "no")
+                }
+
+                if (granted) {
+                    Log.d("BLESpam", "Notification permission granted")
+                    fetchFCMToken()
+                    restoreSpammerUiState()
+                } else {
+                    Log.w("BLESpam", "Notification permission denied")
+                    Toast.makeText(this, getString(R.string.notifications_permission_denied), Toast.LENGTH_SHORT).show()
+                    if (!canSpammerWork()) {
+                        SpamService.stopAllSpammers(this)
+                        updateLogoAnimation()
+                    }
+                }
+            }
         }
     }
 
@@ -151,9 +785,16 @@ class MainActivity : AppCompatActivity() {
                 spammer.stop()
             }
         }
+
         if (spammerList.none { it.isSpamming() }) {
             SpamService.stopAllSpammers(this)
+
+            // Analytics: All spammers stopped
+            firebaseAnalytics.logEvent("all_spammers_stopped") {
+                param("method", "manual")
+            }
         }
+
         if (!isFinishing && !isDestroyed) {
             logo.postDelayed({
                 updateLogoAnimation()
@@ -197,12 +838,14 @@ class MainActivity : AppCompatActivity() {
                         throw IOException("HTTP error: ${response.code}")
                     }
 
-                    val jsonResponse = response.body.string() ?: throw IOException("Empty response")
+                    val jsonResponse = response.body?.string() ?: throw IOException("Empty response")
                     val jsonObject = JSONObject(jsonResponse)
 
                     val latestVersion = jsonObject.getString("version")
                     val releaseNotes = jsonObject.getString("release_notes")
-                    val downloadUrl = jsonObject.getString("download_url")
+                    val downloadUrl = jsonObject.optString("download_url", "")
+                    val openInRuStore = useRuStoreForUpdates
+                    val ruStoreUrl = ruStoreAppUrl
                     val minSupportedVersion = jsonObject.optString("min_supported_version", "0.0")
                     val blockedVersions = jsonObject.optJSONArray("blocked_versions")?.let { jsonArray ->
                         (0 until jsonArray.length()).map { jsonArray.getString(it) }
@@ -217,7 +860,9 @@ class MainActivity : AppCompatActivity() {
                                     title = getString(R.string.update_required_title),
                                     message = getString(R.string.blocked_version_message, currentVersion, releaseNotes),
                                     isForced = true,
-                                    downloadUrl = downloadUrl
+                                    downloadUrl = downloadUrl,
+                                    openInRuStore = openInRuStore,
+                                    ruStoreUrl = ruStoreUrl
                                 )
                             }
                             isVersionNewer(minSupportedVersion, currentVersion) -> {
@@ -225,7 +870,9 @@ class MainActivity : AppCompatActivity() {
                                     title = getString(R.string.update_required_title),
                                     message = getString(R.string.update_message, latestVersion, releaseNotes),
                                     isForced = true,
-                                    downloadUrl = downloadUrl
+                                    downloadUrl = downloadUrl,
+                                    openInRuStore = openInRuStore,
+                                    ruStoreUrl = ruStoreUrl
                                 )
                             }
                             isVersionNewer(latestVersion, currentVersion) -> {
@@ -233,7 +880,9 @@ class MainActivity : AppCompatActivity() {
                                     title = getString(R.string.update_available_title),
                                     message = getString(R.string.update_available_message, latestVersion, releaseNotes),
                                     isForced = false,
-                                    downloadUrl = downloadUrl
+                                    downloadUrl = downloadUrl,
+                                    openInRuStore = openInRuStore,
+                                    ruStoreUrl = ruStoreUrl
                                 )
                             }
                         }
@@ -246,6 +895,19 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }.start()
+    }
+
+    private fun openRuStore(ruStoreUrl: String, dialog: AlertDialog) {
+        val fallbackUrl = ruStoreAppUrl
+        val targetUrl = if (isValidUrl(ruStoreUrl)) ruStoreUrl else fallbackUrl
+
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)))
+            dialog.dismiss()
+        } catch (e: ActivityNotFoundException) {
+            Log.e("BLESpam", "No app to open RuStore URL: $targetUrl", e)
+            Toast.makeText(this, getString(R.string.invalid_download_url), Toast.LENGTH_LONG).show()
+        }
     }
 
     @RequiresApi(Build.VERSION_CODES.M)
@@ -411,9 +1073,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     @RequiresApi(Build.VERSION_CODES.M)
-    private fun showUpdateDialog(title: String, message: String, isForced: Boolean, downloadUrl: String) {
-        val useMaterial = sharedPref.getBoolean("use_material", defaultUseMaterial())
-        val layoutRes = if (useMaterial) R.layout.activity_update_material else R.layout.activity_update_legacy
+    private fun showUpdateDialog(
+        title: String,
+        message: String,
+        isForced: Boolean,
+        downloadUrl: String,
+        openInRuStore: Boolean,
+        ruStoreUrl: String
+    ) {
+        val layoutRes = R.layout.activity_update
 
         val dialogView = layoutInflater.inflate(layoutRes, null)
         downloadProgressBar = dialogView.findViewById<ProgressBar>(R.id.download_progress)
@@ -432,7 +1100,11 @@ class MainActivity : AppCompatActivity() {
             .create()
 
         dialogView.findViewById<Button>(R.id.btn_update).setOnClickListener {
-            downloadApk(downloadUrl, dialog)
+            if (openInRuStore) {
+                openRuStore(ruStoreUrl, dialog)
+            } else {
+                downloadApk(downloadUrl, dialog)
+            }
         }
 
         dialogView.findViewById<Button>(R.id.btn_later).setOnClickListener {
@@ -467,29 +1139,51 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun defaultUseMaterial(): Boolean {
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-    }
-
-    private var isBetaDialogShownInSession = false
-
-
     override fun onResume() {
         super.onResume()
+
+        // Analytics: Screen view
+        firebaseAnalytics.logEvent(FirebaseAnalytics.Event.SCREEN_VIEW) {
+            param(FirebaseAnalytics.Param.SCREEN_NAME, "MainActivity")
+            param(FirebaseAnalytics.Param.SCREEN_CLASS, "MainActivity")
+        }
 
         resetAllSpammerButtonsUi()
         restoreSpammerUiState()
         updateLogoAnimation()
     }
 
-
     override fun onDestroy() {
         if (isChangingConfigurations) {
             Log.d("BLESpam", "onDestroy: configuration change, keeping spammers running")
         }
 
+        // Очистить ВСЕ Handler
+        handlers.forEach { it.removeCallbacksAndMessages(null) }
+        handlers.clear()
+
         blinkHandler.removeCallbacksAndMessages(null)
         progressHandler.removeCallbacksAndMessages(null)
+
+        // Закрыть OkHttpClient
+        try {
+            val executorService = okHttpClient.dispatcher.executorService
+            executorService.execute {
+                try {
+                    okHttpClient.connectionPool.evictAll()
+                } catch (e: Exception) {
+                    Log.e("BLESpam", "Error evicting connection pool", e)
+                }
+            }
+            executorService.shutdown()
+        } catch (e: Exception) {
+            Log.e("BLESpam", "Error closing OkHttpClient", e)
+        }
+
+        // Остановить AnimationDrawable
+        if (::logo.isInitialized) {
+            (logo.drawable as? AnimationDrawable)?.stop()
+        }
 
         try {
             if (!isDestroyed && !isFinishing) {
@@ -503,9 +1197,6 @@ class MainActivity : AppCompatActivity() {
 
         super.onDestroy()
     }
-
-
-
 
     @SuppressLint("StringFormatInvalid")
     private fun installApk(uri: Uri) {
@@ -630,7 +1321,6 @@ class MainActivity : AppCompatActivity() {
     private fun canSpammerWork(): Boolean {
         val hasNotification = hasNotificationPermission()
         val hasBluetooth = isBluetoothEnabledSilent()
-
         return hasNotification || hasBluetooth
     }
 
@@ -703,6 +1393,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateLogoAnimation() {
+        if (!::logo.isInitialized) return
+
         if (isFinishing || isDestroyed) return
 
         val isAnimationEnabled = sharedPref.getBoolean("logo_animation", false)
@@ -731,7 +1423,6 @@ class MainActivity : AppCompatActivity() {
                 }
             } else {
                 (logo.drawable as? AnimationDrawable)?.stop()
-
                 if (logo.tag != "static") {
                     logo.setImageResource(R.drawable.logo)
                     logo.tag = "static"
@@ -745,6 +1436,61 @@ class MainActivity : AppCompatActivity() {
     }
 
 
+    private fun isColorTooDark(color: Int): Boolean {
+        val brightness = (Color.red(color) * 299 +
+                Color.green(color) * 587 +
+                Color.blue(color) * 114) / 1000
+        return brightness < 40
+    }
+
+    private fun isColorTooLight(color: Int): Boolean {
+        val brightness = (Color.red(color) * 299 +
+                Color.green(color) * 587 +
+                Color.blue(color) * 114) / 1000
+        return brightness > 215
+    }
+
+    private fun getCustomHexColor(): Int? {
+        val mode = sharedPref.getString("color_mode", "material") ?: "material"
+        if (mode != "custom") return null
+
+        val hex = sharedPref.getString("custom_color", null) ?: return null
+        return try {
+            Color.parseColor("#$hex")
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun applyActiveCircleColor(circle: ImageView) {
+        val customColor = getCustomHexColor()
+
+        if (customColor == null) {
+            circle.imageTintList = null
+            circle.clearColorFilter()
+            return
+        }
+
+        // When the custom color is too light (e.g. white), tinting the circle black makes it
+        // invisible on the white button. Instead tint it with a contrasting theme color.
+        // When too dark, tint with white so it stays visible.
+        val tintColor = when {
+            isColorTooDark(customColor) -> Color.WHITE
+            isColorTooLight(customColor) -> {
+                // Use the dark theme secondary text color as a visible alternative to pure black
+                resolveAttrColor(android.R.attr.textColorSecondary)
+            }
+            else -> null
+        }
+
+        if (tintColor != null) {
+            circle.imageTintList = ColorStateList.valueOf(tintColor)
+        } else {
+            circle.imageTintList = null
+            circle.clearColorFilter()
+        }
+    }
+
     private fun onClickSpamButton(
         spammer: Spammer,
         spammerName: String,
@@ -752,8 +1498,6 @@ class MainActivity : AppCompatActivity() {
         circle: ImageView
     ) {
         if (!spammerList.contains(spammer)) spammerList.add(spammer)
-
-        val useMaterial = sharedPref.getBoolean("use_material", Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
 
         button.setOnClickListener {
             val isActuallyRunning = try {
@@ -764,6 +1508,12 @@ class MainActivity : AppCompatActivity() {
             }
 
             if (isActuallyRunning) {
+                // Analytics: Spammer stopped
+                firebaseAnalytics.logEvent("spammer_stopped") {
+                    param("spammer_name", spammerName)
+                    param("duration", System.currentTimeMillis())
+                }
+
                 try {
                     val blinkRunnable = spammer.getBlinkRunnable()
                     if (blinkRunnable != null) {
@@ -773,19 +1523,7 @@ class MainActivity : AppCompatActivity() {
                     SpamService.stopSpammer(this, spammerName)
                     vibrateStop()
 
-                    circle.setImageResource(R.drawable.grey_circle)
-                    circle.visibility = View.VISIBLE
-
-                    if (useMaterial) {
-                        val strokeColor = resolveAttrColor(android.R.attr.textColorSecondary)
-                        button.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
-                        try { button.setStrokeColor(ColorStateList.valueOf(strokeColor)) } catch (_: Throwable) {}
-                        button.setTextColor(strokeColor)
-                    } else {
-                        button.background = ContextCompat.getDrawable(this, R.drawable.button_white_outline)
-                        button.backgroundTintList = null
-                        button.setTextColor(ContextCompat.getColor(this, R.color.black))
-                    }
+                    applyInactiveStyle(button, circle)
 
                     updateLogoAnimation()
 
@@ -794,6 +1532,12 @@ class MainActivity : AppCompatActivity() {
                     }
                 } catch (e: Exception) {
                     Log.e("BLESpam", "Failed to stop spammer $spammerName", e)
+
+                    // Analytics: Spammer stop error
+                    firebaseAnalytics.logEvent("spammer_stop_error") {
+                        param("spammer_name", spammerName)
+                        param("error", e.message ?: "unknown")
+                    }
                 }
                 return@setOnClickListener
             }
@@ -804,11 +1548,24 @@ class MainActivity : AppCompatActivity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotification) {
                 requestNotificationPermission()
                 Toast.makeText(this, getString(R.string.notifications_permission_required), Toast.LENGTH_SHORT).show()
+
+                // Analytics: Permission required
+                firebaseAnalytics.logEvent("permission_required") {
+                    param("type", "notification")
+                    param("spammer_name", spammerName)
+                }
+
                 return@setOnClickListener
             }
 
             if (!hasBluetooth) {
                 promptToEnableBluetooth()
+
+                // Analytics: Bluetooth required
+                firebaseAnalytics.logEvent("bluetooth_required") {
+                    param("spammer_name", spammerName)
+                }
+
                 return@setOnClickListener
             }
 
@@ -817,55 +1574,55 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-                Handler(Looper.getMainLooper()).postDelayed({
-                    try {
-                        circle.setImageResource(R.drawable.active_circle)
-                        circle.visibility = View.VISIBLE
+            createHandler().postDelayed({
+                try {
+                    circle.setImageResource(R.drawable.active_circle)
+                    circle.visibility = View.VISIBLE
+                    applyActiveCircleColor(circle)
+                    val buttonColor = getButtonColor()
+                    val textColor = getContrastColor(buttonColor)
+                    button.backgroundTintList = ColorStateList.valueOf(buttonColor)
+                    try { button.setStrokeColor(ColorStateList.valueOf(buttonColor)) } catch (_: Throwable) {}
+                    button.setTextColor(textColor)
 
-                        if (useMaterial) {
-                            val colorPrimary = resolveAttrColor(com.google.android.material.R.attr.colorTertiary)
-                            val colorOnPrimary = resolveAttrColor(com.google.android.material.R.attr.colorOnPrimary)
-                            button.backgroundTintList = ColorStateList.valueOf(colorPrimary)
-                            try { button.setStrokeColor(ColorStateList.valueOf(colorPrimary)) } catch (_: Throwable) {}
-                            button.setTextColor(colorOnPrimary)
-                        } else {
-                            button.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.orange))
-                            button.setTextColor(ContextCompat.getColor(this, R.color.white))
-                        }
+                    val blinkRunnable = startBlinking(circle, spammer, button)
+                    spammer.setBlinkRunnable(blinkRunnable)
 
-                        val blinkRunnable = startBlinking(circle, spammer, button)
-                        spammer.setBlinkRunnable(blinkRunnable)
+                    SpamService.startSpammer(this, spammerName)
+                    vibrateStart()
+                    updateLogoAnimation()
+                    sharedPref.edit()
+                        .putBoolean("force_ui_stopped", false)
+                        .apply()
 
-                        SpamService.startSpammer(this, spammerName)
-                        vibrateStart()
-                        updateLogoAnimation()
-                        sharedPref.edit()
-                            .putBoolean("force_ui_stopped", false)
-                            .apply()
-
-                    } catch (e: Exception) {
-                        Log.e("BLESpam", "Failed to start spammer $spammerName", e)
-                        runOnUiThread {
-                            circle.setImageResource(R.drawable.grey_circle)
-                            circle.visibility = View.VISIBLE
-                            if (useMaterial) {
-                                val strokeColor = resolveAttrColor(android.R.attr.textColorSecondary)
-                                button.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
-                                try { button.setStrokeColor(ColorStateList.valueOf(strokeColor)) } catch (_: Throwable) {}
-                                button.setTextColor(strokeColor)
-                            } else {
-                                button.background = ContextCompat.getDrawable(this, R.drawable.button_white_outline)
-                                button.backgroundTintList = null
-                                button.setTextColor(ContextCompat.getColor(this, R.color.black))
-                            }
-                            updateLogoAnimation()
-                        }
+                    // Analytics: Spammer started
+                    firebaseAnalytics.logEvent("spammer_started") {
+                        param("spammer_name", spammerName)
+                        param("timestamp", System.currentTimeMillis())
                     }
-                }, 50)
+
+                } catch (e: Exception) {
+                    Log.e("BLESpam", "Failed to start spammer $spammerName", e)
+
+                    // Analytics: Spammer start error
+                    firebaseAnalytics.logEvent("spammer_start_error") {
+                        param("spammer_name", spammerName)
+                        param("error", e.message ?: "unknown")
+                    }
+
+                    runOnUiThread {
+                        circle.setImageResource(R.drawable.grey_circle)
+                        circle.visibility = View.VISIBLE
+                        val strokeColor = resolveAttrColor(android.R.attr.textColorSecondary)
+                        button.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+                        try { button.setStrokeColor(ColorStateList.valueOf(strokeColor)) } catch (_: Throwable) {}
+                        button.setTextColor(strokeColor)
+                        updateLogoAnimation()
+                    }
+                }
+            }, 50)
         }
     }
-
-
 
     private fun resolveAttrColor(@AttrRes attr: Int): Int {
         val tv = TypedValue()
@@ -877,10 +1634,69 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun getButtonColor(): Int {
+        val colorMode = sharedPref.getString("color_mode", "material") ?: "material"
+        return if (colorMode == "custom") {
+            val customColorHex = sharedPref.getString("custom_color", "FF6200EE") ?: "FF6200EE"
+            try {
+                Color.parseColor("#$customColorHex")
+            } catch (e: Exception) {
+                Log.w("BLESpam", "Invalid custom color: $customColorHex", e)
+                resolveAttrColor(com.google.android.material.R.attr.colorTertiary)
+            }
+        } else {
+            // On pre-Android 12 devices, Material You is unavailable — use orange fallback
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                resolveAttrColor(com.google.android.material.R.attr.colorTertiary)
+            } else {
+                Color.parseColor("#FF6600")
+            }
+        }
+    }
+
+    private fun getContrastColor(color: Int): Int {
+        val red = Color.red(color)
+        val green = Color.green(color)
+        val blue = Color.blue(color)
+        val brightness = (red * 299 + green * 587 + blue * 114) / 1000
+        return if (brightness > 128) Color.BLACK else Color.WHITE
+    }
+
+    private fun applyThemeColor() {
+        try {
+            val buttonColor = getButtonColor()
+            val textColor = getContrastColor(buttonColor)
+
+            plusDelayButton.backgroundTintList = ColorStateList.valueOf(buttonColor)
+            plusDelayButton.setTextColor(textColor)
+
+            minusDelayButton.backgroundTintList = ColorStateList.valueOf(buttonColor)
+            minusDelayButton.setTextColor(textColor)
+
+            val colorMode = sharedPref.getString("color_mode", "material") ?: "material"
+
+            if (colorMode == "custom") {
+                logo.imageTintList = ColorStateList.valueOf(buttonColor)
+
+                val settingsButton: android.widget.ImageView? = findViewById(R.id.settingsButton)
+                settingsButton?.imageTintList = ColorStateList.valueOf(buttonColor)
+            } else {
+                val materialColor = resolveAttrColor(android.R.attr.colorPrimary)
+                logo.imageTintList = ColorStateList.valueOf(materialColor)
+
+                val settingsButton: android.widget.ImageView? = findViewById(R.id.settingsButton)
+                settingsButton?.imageTintList = ColorStateList.valueOf(materialColor)
+            }
+
+        } catch (e: Exception) {
+            Log.e("BLESpam", "Error in applyThemeColor", e)
+        }
+    }
 
     private fun startBlinking(imageView: ImageView, spammer: Spammer, button: MaterialButton): Runnable {
         imageView.setImageResource(R.drawable.active_circle)
         imageView.visibility = View.VISIBLE
+        applyActiveCircleColor(imageView)
 
         val blinkRunnable = object : Runnable {
             override fun run() {
@@ -899,17 +1715,17 @@ class MainActivity : AppCompatActivity() {
                     SpamService.stopSpammer(this@MainActivity, spammerName ?: "")
                     blinkHandler.removeCallbacks(this)
                     runOnUiThread {
-                        imageView.setImageResource(R.drawable.grey_circle)
-                        imageView.visibility = View.VISIBLE
-                        button.backgroundTintList = ContextCompat.getColorStateList(this@MainActivity, R.color.empty)
-                        button.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.black))
+                        applyInactiveStyle(button, imageView)
+
                         val hasNotification = hasNotificationPermission()
                         val hasBluetooth = isBluetoothEnabledSilent()
+
                         val message = when {
                             !hasNotification && !hasBluetooth -> getString(R.string.notifications_permission_required)
                             !hasBluetooth -> getString(R.string.bluetoothoff_spammeroff)
                             else -> getString(R.string.notifications_permission_required)
                         }
+
                         Toast.makeText(this@MainActivity, message, Toast.LENGTH_SHORT).show()
                         updateLogoAnimation()
                     }
@@ -918,7 +1734,6 @@ class MainActivity : AppCompatActivity() {
 
                 if (isActuallyRunning) {
                     imageView.visibility = if (imageView.visibility == View.VISIBLE) View.INVISIBLE else View.VISIBLE
-
                     val delay = if (imageView.visibility == View.VISIBLE) {
                         (Helper.delay / 10).coerceAtLeast(20)
                     } else {
@@ -928,8 +1743,7 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     blinkHandler.removeCallbacks(this)
                     runOnUiThread {
-                        imageView.visibility = View.VISIBLE
-                        imageView.setImageResource(R.drawable.grey_circle)
+                        applyInactiveStyle(button, imageView)
                     }
                 }
             }
@@ -951,474 +1765,8 @@ class MainActivity : AppCompatActivity() {
             samsungEasyPairBudsButton -> "Samsung Buds"
             samsungEasyPairWatchButton -> "Samsung Watch"
             windowsSwiftPairButton -> "Windows Swift Pair"
+            YandexButton -> "Yandex"
             else -> null
-        }
-    }
-
-
-
-
-    @RequiresApi(Build.VERSION_CODES.M)
-    override fun onCreate(savedInstanceState: Bundle?) {
-        sharedPref = getSharedPreferences("AppSettings", Context.MODE_PRIVATE)
-        val theme = sharedPref.getString("theme", "auto") ?: "auto"
-        setAppTheme(theme)
-
-        val useMaterial = sharedPref.getBoolean(
-            "use_material",
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
-        )
-
-        super.onCreate(savedInstanceState)
-        setContentView(
-            if (useMaterial) R.layout.activity_main_material
-            else R.layout.activity_main_legacy
-        )
-
-        initializeViews()
-
-        val bugButton = findViewById<ImageView>(R.id.settingsButton)
-        bugButton.setOnClickListener {
-            startActivity(Intent(this, SettingsActivity::class.java))
-        }
-
-        val requiredPermissions = getRequiredPermissions()
-        val permissionsToRequest = requiredPermissions.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }.toTypedArray()
-
-        if (permissionsToRequest.isNotEmpty()) {
-            Log.d("BLESpam", "Запрашиваем разрешения: ${permissionsToRequest.contentToString()}")
-            ActivityCompat.requestPermissions(this, permissionsToRequest, REQUEST_ALL_PERMISSIONS)
-        } else {
-            checkForNewVersion()
-            completeInitialization()
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            requestNotificationPermission()
-        }
-
-        Handler(Looper.getMainLooper()).postDelayed({
-        }, 500)
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-
-        if (intent.action == StopSpamReceiver.ACTION_UI_STOPPED) {
-            Log.d("BLESpam", "onNewIntent: ACTION_UI_STOPPED received")
-
-            Handler(Looper.getMainLooper()).postDelayed({
-                forceResetAllUI()
-            }, 100)
-        }
-    }
-
-    private fun forceResetAllUI() {
-        Log.d("BLESpam", "forceResetAllUI: starting")
-
-        blinkHandler.removeCallbacksAndMessages(null)
-
-        spammerList.forEach {
-            it.getBlinkRunnable()?.let { r -> blinkHandler.removeCallbacks(r) }
-            it.setBlinkRunnable(null)
-        }
-        spammerList.clear()
-
-        val useMaterial = sharedPref.getBoolean("use_material", Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-
-        val buttons = listOf(
-            ios17CrashButton to ios17CrashCircle,
-            appleActionModalButton to appleActionModalCircle,
-            appleDevicePopupButton to appleDevicePopupCircle,
-            appleNotYourDevicePopupButton to appleNotYourDevicePopupCircle,
-            vzhuhSpamButton to vzhuhSpamCircle,
-            androidFastPairButton to androidFastPairCircle,
-            xiaomiQuickConnectButton to xiaomiQuickConnectCircle,
-            samsungEasyPairBudsButton to samsungEasyPairBudsCircle,
-            samsungEasyPairWatchButton to samsungEasyPairWatchCircle,
-            windowsSwiftPairButton to windowsSwiftPairCircle
-        )
-
-        buttons.forEach { (button, circle) ->
-            circle.setImageResource(R.drawable.grey_circle)
-            circle.visibility = View.VISIBLE
-
-            if (useMaterial) {
-                val strokeColor = resolveAttrColor(android.R.attr.textColorSecondary)
-
-                button.icon = null
-                button.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
-                button.setTextColor(strokeColor)
-
-                try {
-                    button.strokeWidth = 3
-                    button.setStrokeColor(ColorStateList.valueOf(strokeColor))
-                } catch (e: Throwable) {
-                    Log.e("BLESpam", "Error setting stroke: ${e.message}")
-                }
-            } else {
-                button.background = ContextCompat.getDrawable(this, R.drawable.button_white_outline)
-                button.backgroundTintList = null
-                button.setTextColor(ContextCompat.getColor(this, R.color.black))
-            }
-        }
-
-        updateLogoAnimation()
-
-        Log.d("BLESpam", "forceResetAllUI: complete")
-    }
-
-    private fun resetButtonUI(button: MaterialButton, circle: ImageView) {
-        val useMaterial = sharedPref.getBoolean("use_material", Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-
-        circle.setImageResource(R.drawable.grey_circle)
-        circle.visibility = View.VISIBLE
-
-        if (useMaterial) {
-            val strokeColor = resolveAttrColor(android.R.attr.textColorSecondary)
-
-            button.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
-            button.setTextColor(strokeColor)
-
-            try {
-                button.setStrokeColor(ColorStateList.valueOf(strokeColor))
-                button.strokeWidth = resources.getDimensionPixelSize(R.dimen.button_stroke_width).takeIf { it > 0 } ?: 3
-            } catch (_: Throwable) {}
-
-        } else {
-            button.background = ContextCompat.getDrawable(this, R.drawable.button_white_outline)
-            button.backgroundTintList = null
-            button.setTextColor(ContextCompat.getColor(this, R.color.black))
-        }
-
-        button.invalidate()
-        button.requestLayout()
-    }
-
-
-
-
-    override fun onStart() {
-        super.onStart()
-    }
-
-    override fun onStop() {
-        super.onStop()
-    }
-
-
-
-
-
-    private fun applyInactiveStyle(button: MaterialButton, circle: ImageView) {
-        val useMaterial = sharedPref.getBoolean("use_material", Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-
-        circle.setImageResource(R.drawable.grey_circle)
-        circle.visibility = View.VISIBLE
-
-        if (useMaterial) {
-            val strokeColor = resolveAttrColor(android.R.attr.textColorSecondary)
-            button.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
-            try { button.setStrokeColor(ColorStateList.valueOf(strokeColor)) } catch (_: Throwable) {}
-            button.setTextColor(strokeColor)
-        } else {
-            button.background = ContextCompat.getDrawable(this, R.drawable.button_white_outline)
-            button.backgroundTintList = null
-            button.setTextColor(ContextCompat.getColor(this, R.color.black))
-        }
-    }
-
-    private fun resetAllSpammerButtonsUi() {
-        blinkHandler.removeCallbacksAndMessages(null)
-
-        spammerList.forEach {
-            it.getBlinkRunnable()?.let { r -> blinkHandler.removeCallbacks(r) }
-            it.setBlinkRunnable(null)
-        }
-        spammerList.clear()
-        applyInactiveStyle(ios17CrashButton, ios17CrashCircle)
-        applyInactiveStyle(appleActionModalButton, appleActionModalCircle)
-        applyInactiveStyle(appleDevicePopupButton, appleDevicePopupCircle)
-        applyInactiveStyle(appleNotYourDevicePopupButton, appleNotYourDevicePopupCircle)
-        applyInactiveStyle(vzhuhSpamButton, vzhuhSpamCircle)
-        applyInactiveStyle(androidFastPairButton, androidFastPairCircle)
-        applyInactiveStyle(xiaomiQuickConnectButton, xiaomiQuickConnectCircle)
-        applyInactiveStyle(samsungEasyPairBudsButton, samsungEasyPairBudsCircle)
-        applyInactiveStyle(samsungEasyPairWatchButton, samsungEasyPairWatchCircle)
-        applyInactiveStyle(windowsSwiftPairButton, windowsSwiftPairCircle)
-
-        updateLogoAnimation()
-    }
-
-    private fun initializeViews() {
-        vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-            vibratorManager.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-        }
-        
-        logo = findViewById(R.id.logo)
-        ios17CrashButton = findViewById(R.id.ios17CrashButton)
-        ios17CrashCircle = findViewById(R.id.ios17CrashCircle)
-        appleActionModalButton = findViewById(R.id.appleActionModalButton)
-        appleActionModalCircle = findViewById(R.id.appleActionModalCircle)
-        appleDevicePopupButton = findViewById(R.id.appleDevicePopupButton)
-        appleDevicePopupCircle = findViewById(R.id.appleDevicePopupCircle)
-        appleNotYourDevicePopupButton = findViewById(R.id.appleNotYourDevicePopupButton)
-        appleNotYourDevicePopupCircle = findViewById(R.id.appleNotYourDevicePopupCircle)
-        vzhuhSpamButton = findViewById(R.id.vzhuhSpamButton)
-        vzhuhSpamCircle = findViewById(R.id.vzhuhSpamCircle)
-        androidFastPairButton = findViewById(R.id.androidFastPairButton)
-        androidFastPairCircle = findViewById(R.id.androidFastPairCircle)
-        samsungEasyPairBudsButton = findViewById(R.id.samsungEasyPairBudsButton)
-        samsungEasyPairBudsCircle = findViewById(R.id.samsungEasyPairBudsCircle)
-        xiaomiQuickConnectButton = findViewById(R.id.XiaomiQuickConnectButton)
-        xiaomiQuickConnectCircle = findViewById(R.id.XiaomiQuickConnectCircle)
-        samsungEasyPairWatchButton = findViewById(R.id.samsungEasyPairWatchButton)
-        samsungEasyPairWatchCircle = findViewById(R.id.samsungEasyPairWatchCircle)
-        windowsSwiftPairButton = findViewById(R.id.windowsSwiftPairButton)
-        windowsSwiftPairCircle = findViewById(R.id.windowsSwiftPairCircle)
-        minusDelayButton = findViewById(R.id.minusDelayButton)
-        plusDelayButton = findViewById(R.id.plusDelayButton)
-        delayText = findViewById(R.id.delayText)
-    }
-
-    private fun getRequiredPermissions(): Array<String> {
-        val list = mutableListOf<String>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            list.add(Manifest.permission.BLUETOOTH_ADVERTISE)
-            list.add(Manifest.permission.BLUETOOTH_CONNECT)
-            list.add(Manifest.permission.BLUETOOTH_SCAN)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            list.add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-        return list.toTypedArray()
-    }
-
-    private fun completeInitialization() {
-        if (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                Helper.isPermissionGranted(this)
-            } else {
-                ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.ACCESS_FINE_LOCATION
-                ) == PackageManager.PERMISSION_GRANTED
-            }
-        ) {
-            initializeSpamButtons()
-            restoreSpammerUiState()
-            setupDelayButtons()
-
-        }
-    }
-
-    private fun restoreSpammerUiState() {
-        try {
-            val mapping = listOf(
-                Triple("iOS Crash", ios17CrashButton to ios17CrashCircle, { ContinuitySpam(ContinuityType.ACTION, true) }),
-                Triple("Apple Action Modal", appleActionModalButton to appleActionModalCircle, { ContinuitySpam(ContinuityType.ACTION, false) }),
-                Triple("Apple Device Popup", appleDevicePopupButton to appleDevicePopupCircle, { ContinuitySpam(ContinuityType.DEVICE, false) }),
-                Triple("Apple 'Not Your Device'", appleNotYourDevicePopupButton to appleNotYourDevicePopupCircle, { ContinuitySpam(ContinuityType.NOTYOURDEVICE, false) }),
-                Triple("Vzhuh Spam", vzhuhSpamButton to vzhuhSpamCircle, { VzhuhSpam() }),
-                Triple("Android Fast Pair", androidFastPairButton to androidFastPairCircle, { FastPairSpam() }),
-                Triple("Xiaomi Quick Connect", xiaomiQuickConnectButton to xiaomiQuickConnectCircle, { XiaomiQuickConnect() }),
-                Triple("Samsung Buds", samsungEasyPairBudsButton to samsungEasyPairBudsCircle, { EasySetupSpam(EasySetupDevice.type.BUDS) }),
-                Triple("Samsung Watch", samsungEasyPairWatchButton to samsungEasyPairWatchCircle, { EasySetupSpam(EasySetupDevice.type.WATCH) }),
-                Triple("Windows Swift Pair", windowsSwiftPairButton to windowsSwiftPairCircle, { SwiftPairSpam() })
-            )
-
-            for (item in mapping) {
-                val (name, views, factory) = item
-                val (button, circle) = views
-
-                val isRunning = try {
-                    SpamService.isSpammerRunning(name)
-                } catch (e: Exception) {
-                    Log.w("BLESpam", "isSpammerRunning error for $name: ${e.message}")
-                    false
-                }
-
-                if (isRunning) {
-                    val spammer = try {
-                        factory.invoke()
-                    } catch (e: Exception) {
-                        Log.e("BLESpam", "Failed to create spammer $name", e)
-                        continue
-                    }
-
-                    if (!spammerList.contains(spammer)) spammerList.add(spammer)
-
-                    runOnUiThread {
-                        circle.setImageResource(R.drawable.active_circle)
-                        circle.visibility = View.VISIBLE
-
-                        val useMaterial = sharedPref.getBoolean("use_material", Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-                        if (useMaterial) {
-                            val colorPrimary = resolveAttrColor(com.google.android.material.R.attr.colorTertiary)
-                            val colorOnPrimary = resolveAttrColor(com.google.android.material.R.attr.colorOnPrimary)
-                            button.backgroundTintList = ColorStateList.valueOf(colorPrimary)
-                            try { button.setStrokeColor(ColorStateList.valueOf(colorPrimary)) } catch (_: Throwable) {}
-                            button.setTextColor(colorOnPrimary)
-                        } else {
-                            button.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.orange))
-                            button.setTextColor(ContextCompat.getColor(this, R.color.white))
-                        }
-
-                        val blink = startBlinking(circle, spammer, button)
-                        spammer.setBlinkRunnable(blink)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("BLESpam", "restoreSpammerUiState failed", e)
-        }
-    }
-
-    private fun requestNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 4)
-            }
-        }
-    }
-
-    private fun setAppTheme(theme: String) {
-        when (theme) {
-            "light" -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
-            "dark" -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
-            else -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
-        }
-    }
-
-    private fun isAppInDarkTheme(): Boolean {
-        return when (AppCompatDelegate.getDefaultNightMode()) {
-            AppCompatDelegate.MODE_NIGHT_YES -> true
-            AppCompatDelegate.MODE_NIGHT_NO -> false
-            AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM -> {
-                (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-            }
-            else -> {
-                (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-            }
-        }
-    }
-
-    override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig)
-        val bugButton: ImageView = findViewById(R.id.settingsButton)
-        val isDarkTheme = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        bugButton.setImageResource(if (isDarkTheme) R.mipmap.ic_menu_night else R.mipmap.ic_menu)
-    }
-
-    private fun initializeSpamButtons() {
-
-        try {
-            onClickSpamButton(ContinuitySpam(ContinuityType.ACTION, true), "iOS Crash", ios17CrashButton, ios17CrashCircle)
-            onClickSpamButton(ContinuitySpam(ContinuityType.ACTION, false), "Apple Action Modal", appleActionModalButton, appleActionModalCircle)
-            onClickSpamButton(ContinuitySpam(ContinuityType.DEVICE, false), "Apple Device Popup", appleDevicePopupButton, appleDevicePopupCircle)
-            onClickSpamButton(ContinuitySpam(ContinuityType.NOTYOURDEVICE, false), "Apple 'Not Your Device'", appleNotYourDevicePopupButton, appleNotYourDevicePopupCircle)
-            onClickSpamButton(VzhuhSpam(), "Vzhuh Spam", vzhuhSpamButton, vzhuhSpamCircle)
-            onClickSpamButton(FastPairSpam(), "Android Fast Pair", androidFastPairButton, androidFastPairCircle)
-            onClickSpamButton(XiaomiQuickConnect(), "Xiaomi Quick Connect", xiaomiQuickConnectButton, xiaomiQuickConnectCircle)
-            onClickSpamButton(EasySetupSpam(EasySetupDevice.type.BUDS), "Samsung Buds", samsungEasyPairBudsButton, samsungEasyPairBudsCircle)
-            onClickSpamButton(EasySetupSpam(EasySetupDevice.type.WATCH), "Samsung Watch", samsungEasyPairWatchButton, samsungEasyPairWatchCircle)
-            onClickSpamButton(SwiftPairSpam(), "Windows Swift Pair", windowsSwiftPairButton, windowsSwiftPairCircle)
-        } catch (@Suppress("UNUSED_PARAMETER") e: IOException) {
-            Toast.makeText(this, getString(R.string.swiftpair), Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun setupDelayButtons() {
-        minusDelayButton.setOnClickListener {
-            val i = Helper.delays.indexOf(Helper.delay)
-            if (i > 0) {
-                Helper.delay = Helper.delays[i - 1]
-                delayText.text = getString(R.string.delay_text, Helper.delay)
-            }
-        }
-        plusDelayButton.setOnClickListener {
-            val i = Helper.delays.indexOf(Helper.delay)
-            if (i < Helper.delays.size - 1) {
-                Helper.delay = Helper.delays[i + 1]
-                delayText.text = getString(R.string.delay_text, Helper.delay)
-            }
-        }
-    }
-
-    @RequiresApi(Build.VERSION_CODES.M)
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        when (requestCode) {
-            REQUEST_ALL_PERMISSIONS -> {
-                val deniedPermissions = mutableListOf<String>()
-                permissions.forEachIndexed { index, permission ->
-                    if (grantResults.getOrNull(index) != PackageManager.PERMISSION_GRANTED) {
-                        deniedPermissions.add(permission)
-                    }
-                }
-                if (deniedPermissions.isEmpty()) {
-                    Log.d("BLESpam", "Все разрешения получены.")
-                    checkForNewVersion()
-                    completeInitialization()
-                    Handler(Looper.getMainLooper()).postDelayed({
-                    }, 500)
-                } else {
-                    Log.w("BLESpam", "Отклонены следующие разрешения: ${deniedPermissions.joinToString(", ")}")
-                    Toast.makeText(
-                        this,
-                        if (deniedPermissions.any { it == Manifest.permission.POST_NOTIFICATIONS }) {
-                            getString(R.string.notifications_permission_required)
-                        } else {
-                            getString(R.string.permissions_denied)
-                        },
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
-            2 -> {
-                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    Log.d("BLESpam", "Bluetooth permission granted, checking if enabled")
-                    if (!checkBluetoothEnabled()) {
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            promptToEnableBluetooth()
-                        }, 200)
-                    }
-                } else {
-                    Log.w("BLESpam", "Bluetooth permission denied")
-                    Toast.makeText(this, getString(R.string.bluetooth_permission_required), Toast.LENGTH_SHORT).show()
-                }
-            }
-            3 -> {
-                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    Log.d("BLESpam", "Storage permission granted")
-                    Toast.makeText(this, getString(R.string.storage_permission_granted), Toast.LENGTH_SHORT).show()
-                } else {
-                    Log.w("BLESpam", "Storage permission denied")
-                    Toast.makeText(this, getString(R.string.storage_permission_denied), Toast.LENGTH_SHORT).show()
-                }
-            }
-            4 -> {
-                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    Log.d("BLESpam", "Notification permission granted")
-                    restoreSpammerUiState()
-                } else {
-                    Log.w("BLESpam", "Notification permission denied")
-                    Toast.makeText(this, getString(R.string.notifications_permission_denied), Toast.LENGTH_SHORT).show()
-                    if (!canSpammerWork()) {
-                        SpamService.stopAllSpammers(this)
-                        updateLogoAnimation()
-                    }
-                }
-            }
         }
     }
 

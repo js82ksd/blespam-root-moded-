@@ -15,6 +15,8 @@ import android.content.pm.ServiceInfo
 import android.util.Log
 import java.util.concurrent.ConcurrentHashMap
 import com.tutozz.blespam.R
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 
 class SpamService : Service() {
     private val controllers = ConcurrentHashMap<String, SpammerController>()
@@ -118,6 +120,7 @@ class SpamService : Service() {
         }
 
         updateNotification()
+        notifyExternalUi()
         return START_STICKY
     }
 
@@ -144,6 +147,7 @@ class SpamService : Service() {
             try { ctrl.stop() } catch (e: Exception) { Log.e("SpamService", "Error stopping controller", e) }
         }
         controllers.clear()
+        notifyExternalUi()
     }
 
     private fun createControllerForType(type: String): SpammerController? {
@@ -168,6 +172,8 @@ class SpamService : Service() {
                 SpammerWrapper(EasySetupSpam(EasySetupDevice.type.WATCH))
             "Windows Swift Pair" ->
                 SpammerWrapper(SwiftPairSpam())
+            "Yandex" ->
+                SpammerWrapper(YandexSpam())
             else -> null
         }
     }
@@ -223,10 +229,12 @@ class SpamService : Service() {
         )
         val androidSpammers = listOf("Android Fast Pair", "Xiaomi Quick Connect", "Samsung Buds", "Samsung Watch")
         val windowsSpammers = listOf("Windows Swift Pair")
+        val YandexSpammers = listOf("Yandex")
 
         val activeIos = spammerList.filter { it in iosSpammers }
         val activeAndroid = spammerList.filter { it in androidSpammers }
         val activeWindows = spammerList.filter { it in windowsSpammers }
+        val activeYandex = spammerList.filter { it in YandexSpammers }
 
         val displayList = mutableListOf<String>()
 
@@ -244,6 +252,10 @@ class SpamService : Service() {
 
         if (activeWindows.isNotEmpty()) {
             displayList.add("Windows")
+        }
+
+        if (activeYandex.isNotEmpty()) {
+            displayList.add("Yandex")
         }
 
         val finalDisplay = if (activeIos.size == iosSpammers.size &&
@@ -310,5 +322,40 @@ class SpamService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         activeSpammers.clear()
+        notifyExternalUi()
+    }
+    
+    private fun notifyExternalUi() {
+        try {
+            // Update widget
+            val intent = Intent(this, SpammerWidgetProvider::class.java).apply {
+                action = AppWidgetManager.ACTION_APPWIDGET_UPDATE
+            }
+            val ids = AppWidgetManager.getInstance(application).getAppWidgetIds(
+                ComponentName(application, SpammerWidgetProvider::class.java)
+            )
+            intent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
+            sendBroadcast(intent)
+
+            // Update QS Tiles
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                val tileServices = listOf(
+                    AppleTileService::class.java,
+                    AndroidTileService::class.java,
+                    WindowsTileService::class.java,
+                    SamsungTileService::class.java,
+                    YandexTileService::class.java,
+                    XiaomiTileService::class.java
+                )
+                for (serviceClass in tileServices) {
+                    android.service.quicksettings.TileService.requestListeningState(
+                        this,
+                        ComponentName(this, serviceClass)
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SpamService", "Failed to update external UI components", e)
+        }
     }
 }

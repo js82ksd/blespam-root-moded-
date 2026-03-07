@@ -17,23 +17,61 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import java.util.Locale
-import com.tutozz.blespam.R
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.util.TypedValue
+import androidx.annotation.AttrRes
+import android.util.Log
+
 
 @SuppressLint("CustomSplashScreen")
 class SplashActivity : AppCompatActivity() {
 
     private lateinit var sharedPref: SharedPreferences
+
     private val permissionRequestLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         handlePermissionsResult(permissions)
     }
 
+    private fun applyCustomColorToSplash() {
+        try {
+            val gifImageView = findViewById<ImageView>(R.id.gifImageView)
+
+            val colorMode = sharedPref.getString("color_mode", "material") ?: "material"
+
+            if (colorMode == "custom") {
+                val customColorHex = sharedPref.getString("custom_color", "FF6200EE") ?: "FF6200EE"
+                try {
+                    val customColor = Color.parseColor("#$customColorHex")
+                    gifImageView.imageTintList = ColorStateList.valueOf(customColor)
+                } catch (e: Exception) {
+                    val materialColor = resolveAttrColor(android.R.attr.colorPrimary)
+                    gifImageView.imageTintList = ColorStateList.valueOf(materialColor)
+                }
+            }
+
+        } catch (e: Exception) {
+            Log.e("SplashActivity", "Error applying custom color", e)
+        }
+    }
+
+    private fun resolveAttrColor(@AttrRes attr: Int): Int {
+        val tv = TypedValue()
+        theme.resolveAttribute(attr, tv, true)
+        return if (tv.resourceId != 0) {
+            ContextCompat.getColor(this, tv.resourceId)
+        } else {
+            tv.data
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val activeSpammers = try {
             SpamService.getActiveSpammers()
         } catch (e: Exception) {
-            emptySet<String>()
+            emptySet()
         }
 
         if (activeSpammers.isNotEmpty()) {
@@ -44,22 +82,18 @@ class SplashActivity : AppCompatActivity() {
         }
 
         sharedPref = getSharedPreferences("AppSettings", MODE_PRIVATE)
-
         val theme = sharedPref.getString("theme", "auto") ?: "auto"
         setAppTheme(theme)
 
         val languageCode = sharedPref.getString("language", Locale.getDefault().language) ?: "en"
+        NotificationAudienceHelper.syncLanguageAndCountry(sharedPref, languageCode)
         setAppLanguage(languageCode)
 
         super.onCreate(savedInstanceState)
-
-        val useMaterial = sharedPref.getBoolean("use_material", defaultUseMaterial())
-        setContentView(
-            if (useMaterial) R.layout.activity_splash_material
-            else R.layout.activity_splash_legacy
-        )
-
-        initViews(useMaterial)
+        setContentView(R.layout.activity_splash)
+        sharedPref = getSharedPreferences("AppSettings", MODE_PRIVATE)
+        applyCustomColorToSplash()
+        initViews()
 
         if (hasPermissions()) {
             proceedToMainActivity()
@@ -68,11 +102,7 @@ class SplashActivity : AppCompatActivity() {
         }
     }
 
-    private fun defaultUseMaterial(): Boolean {
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-    }
-
-    private fun initViews(useMaterial: Boolean) {
+    private fun initViews() {
         val gifImageView: ImageView = findViewById(R.id.gifImageView)
         val versionTextView: TextView = findViewById(R.id.versionTextView)
 
@@ -87,7 +117,6 @@ class SplashActivity : AppCompatActivity() {
         }
 
         gifImageView.setImageResource(animResource)
-
         gifImageView.post {
             (gifImageView.drawable as? android.graphics.drawable.AnimationDrawable)?.start()
         }
@@ -106,11 +135,9 @@ class SplashActivity : AppCompatActivity() {
     private fun setAppLanguage(languageCode: String) {
         val locale = Locale(languageCode)
         Locale.setDefault(locale)
-
         val config = resources.configuration
         config.setLocale(locale)
         resources.updateConfiguration(config, resources.displayMetrics)
-
         createConfigurationContext(config)
     }
 

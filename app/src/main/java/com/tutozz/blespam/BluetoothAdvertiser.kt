@@ -1,53 +1,25 @@
 package com.tutozz.blespam
 
 import android.Manifest
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
-import android.bluetooth.le.BluetoothLeAdvertiser
-import android.bluetooth.le.BluetoothLeScanner
-import android.bluetooth.le.ScanCallback
-import android.bluetooth.le.ScanFilter
-import android.bluetooth.le.ScanSettings
-import android.os.ParcelUuid
+import android.bluetooth.le.AdvertisingSetCallback
+import android.bluetooth.le.AdvertisingSetParameters
+import android.os.Build
+import android.util.Log
 import androidx.annotation.RequiresPermission
-import java.util.UUID
 
 class BluetoothAdvertiser {
+
     private val bluetoothAdapter = BluetoothHelper.bluetoothAdapter
-    private val bluetoothLeAdvertiser: BluetoothLeAdvertiser?
-        get() = bluetoothAdapter?.bluetoothLeAdvertiser
 
-    private val settingsBuilder: AdvertiseSettings.Builder
-        get() = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
-            .setConnectable(true)
-
-    fun advertise(
-        advertiseData: AdvertiseData,
-        scanResponse: AdvertiseData?,
-        connectable: Boolean = false
-    ) {
-        val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
-            .setConnectable(connectable)
-            .build()
-
-        val advertiser = bluetoothLeAdvertiser
-        if (advertiser == null) {
-            Helper.log("BluetoothLeAdvertiser is null")
-            return
-        }
-
-        advertiser.startAdvertising(settings, advertiseData, scanResponse, advertiseCallback)
-    }
-
+    private val advertiser get() = bluetoothAdapter?.bluetoothLeAdvertiser
 
     private val advertiseCallback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
-            Helper.log("Advertising started successfully")
+            Helper.log("Advertising started")
         }
 
         override fun onStartFailure(errorCode: Int) {
@@ -55,8 +27,119 @@ class BluetoothAdvertiser {
         }
     }
 
+    private var extCallback: AdvertisingSetCallback? = null
+
+    private var legacyCallbackActive: Boolean = false
+    private var extendedCallbackActive: Boolean = false
+
+    @RequiresPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
+    fun advertise(
+        advertiseData: AdvertiseData,
+        scanResponse: AdvertiseData? = null
+    ) {
+        if (Helper.canUseExtendedAdvertising()) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                advertiseExtended(advertiseData)
+                return
+            }
+        }
+        advertiseLegacy(advertiseData, scanResponse)
+    }
+
+    @RequiresPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
+    private fun advertiseLegacy(advertiseData: AdvertiseData, scanResponse: AdvertiseData?) {
+        val adv = advertiser ?: run {
+            Helper.log("BluetoothLeAdvertiser is null")
+            return
+        }
+        val settings = AdvertiseSettings.Builder()
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+            .setConnectable(false)
+            .setTimeout(0)
+            .build()
+        try {
+            adv.startAdvertising(settings, advertiseData, scanResponse, advertiseCallback)
+            legacyCallbackActive = true
+        } catch (e: Exception) {
+            Helper.log("startAdvertising error: ${e.message}")
+            legacyCallbackActive = false
+        }
+    }
+
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.O)
+    @RequiresPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
+    private fun advertiseExtended(advertiseData: AdvertiseData) {
+        val adv = advertiser ?: run {
+            Helper.log("BluetoothLeAdvertiser is null (extended)")
+            return
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // ИСПРАВЛЕНИЕ: setLegacyMode(false) для payload > 31 байт, scannable(false)
+        // ═══════════════════════════════════════════════════════════
+        val params = AdvertisingSetParameters.Builder()
+            .setLegacyMode(false)  // ← ИЗМЕНЕНО! Было true
+            .setInterval(AdvertisingSetParameters.INTERVAL_MIN)
+            .setTxPowerLevel(AdvertisingSetParameters.TX_POWER_HIGH)
+            .setConnectable(false)
+            .setScannable(false) // ← ИЗМЕНЕНО! Было true, вызывало внутреннюю ошибку (4) без scanResponse
+            .setPrimaryPhy(BluetoothDevice.PHY_LE_1M)
+            .setSecondaryPhy(BluetoothDevice.PHY_LE_1M)
+            .build()
+
+        extCallback = object : AdvertisingSetCallback() {
+            override fun onAdvertisingSetStarted(
+                advertisingSet: android.bluetooth.le.AdvertisingSet?,
+                txPower: Int,
+                status: Int
+            ) {
+                if (status == ADVERTISE_SUCCESS) {
+                    Helper.log("Extended advertising started (tx=$txPower dBm)")
+                } else {
+                    Helper.log("Extended advertising failed: $status")
+                    if (status == 2) { // DATA_TOO_LARGE
+                        Helper.log("Data too large for extended advertising - Falling back to Legacy")
+                        Helper.hardwareExtendedBroken = true
+                    }
+                    extendedCallbackActive = false
+                    // Try legacy as a last resort
+                    advertiseLegacy(advertiseData, null)
+                }
+            }
+        }
+
+        try {
+            adv.startAdvertisingSet(params, advertiseData, null, null, null, extCallback)
+            extendedCallbackActive = true
+        } catch (e: Exception) {
+            Helper.log("startAdvertisingSet error: ${e.message}")
+            extendedCallbackActive = false
+            advertiseLegacy(advertiseData, null)
+        }
+    }
+
     @RequiresPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
     fun stopAdvertising() {
-        bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback)
+        if (extendedCallbackActive) {
+            extCallback?.let {
+                try { 
+                    advertiser?.stopAdvertisingSet(it) 
+                    Helper.log("Extended advertising stopped")
+                } catch (e: Exception) {
+                    Log.e("BLESpam", "Error stopping extended advertising: ${e.message}")
+                }
+            }
+            extendedCallbackActive = false
+        }
+        if (legacyCallbackActive) {
+            try { 
+                advertiser?.stopAdvertising(advertiseCallback) 
+                Helper.log("Legacy advertising stopped")
+            } catch (e: Exception) {
+                Log.e("BLESpam", "Error stopping legacy advertising: ${e.message}")
+            }
+            legacyCallbackActive = false
+        }
     }
 }

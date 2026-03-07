@@ -461,6 +461,15 @@ class FastPairSpam : Spammer {
         FastPairDevice("0x00000C", "Galaxy Gphones transfer"),
         FastPairDevice("0x0577B1", "Galaxy S23 Ultra transfer"),
         FastPairDevice("0x05A9BC", "Galaxy S20+ transfer"),
+        // New 2024 devices
+        FastPairDevice("0xDA9B43", "Pixel Buds Pro 2"),
+        FastPairDevice("0xE6B2D4", "Nothing Ear (3)"),
+        FastPairDevice("0x9B4B6A", "Nothing Ear (a)"),
+        FastPairDevice("0xA7C128", "Samsung Galaxy Buds 3"),
+        FastPairDevice("0xB8D241", "Samsung Galaxy Buds 3 Pro"),
+        FastPairDevice("0xC9E352", "Samsung Galaxy Buds FE"),
+        FastPairDevice("0xF1A234", "OnePlus Buds 3"),
+        FastPairDevice("0xD2B345", "Anker Soundcore Liberty 4 Pro"),
     )
 
     lateinit var devicesAdvertiseData: Array<AdvertiseData>
