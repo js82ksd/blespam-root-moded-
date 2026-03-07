@@ -1,7 +1,7 @@
 
 # BLE SPAM 📡 — Next-Gen Spoofing Toolkit
 
-[**English**](#-overview) | [**Русский**](#-обзор)
+[**Русский**](assets/README_RU.md)
 
 [![Platform](https://img.shields.io/badge/Android-8.0%2B-brightgreen)](https://developer.android.com)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -85,3 +85,4 @@ This tool is intended for **educational purposes** and authorized security audit
 <p align="center">
 Developed with ❤️ for the BLE research community.
 </p>
+
