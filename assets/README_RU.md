@@ -7,7 +7,7 @@
 [![Telegram](https://img.shields.io/badge/Join-Telegram%20Channel-0088cc)](https://t.me/blespam)
 
 <p align="center">
-  <img src="./assets/logo.gif" width="200" alt="BLE Spammer Logo">
+  <img src=".././assets/logo.gif" width="200" alt="BLE Spammer Logo">
 </p>
 
 ## 🚀 Overview
