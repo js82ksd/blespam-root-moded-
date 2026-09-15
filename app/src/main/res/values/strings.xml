@@ -175,6 +175,9 @@
     <string name="ble_spam_channel_description">BLE Spam operation status</string>
     <string name="beta_version_title">WARNING</string>
     <string name="beta_version_message">This version of the application is intended exclusively for testing.\n\nPublication or distribution of this version on the internet is prohibited and will result in exclusion from the beta testing program.</string>
-    <string name="beta_version_close_button">Close</string>
+       <string name="beta_version_close_button">Close</string>
     <string name="beta_version_close_button_timer">Close (%1$d)</string>
+    <string name="_20ms">20ms</string>
+    <string name="root_title">Root (HCI)</string>
+    <string name="root_spam">Root Spam</string>
 </resources>
