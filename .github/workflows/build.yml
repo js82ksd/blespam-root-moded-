@@ -21,27 +21,47 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup NDK
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r26b
-          add-to-path: true
+      - name: Install NDK and CMake
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install \
+            "ndk;26.1.10909125" "cmake;3.22.1" || true
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
       - name: Build with Gradle
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: ./gradlew assembleDebug --stacktrace
+        id: build
+        continue-on-error: true
+        run: |
+          ./gradlew assembleDebug > build_output.log 2>&1
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+
+      - name: Show errors in Summary
+        if: always()
+        run: |
+          echo "## ❌ Ошибки сборки" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -A 30 "FAILURE: Build failed" build_output.log | head -50 >> $GITHUB_STEP_SUMMARY || echo "FAILURE block not found" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔍 Все ошибки Kotlin/C++" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -E "^e: |error:|ERROR:" build_output.log | head -30 >> $GITHUB_STEP_SUMMARY || echo "no e:/error: lines" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload full log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build_output.log
+          retention-days: 7
 
       - name: Upload APK
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: blespam-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 30
-
-          
