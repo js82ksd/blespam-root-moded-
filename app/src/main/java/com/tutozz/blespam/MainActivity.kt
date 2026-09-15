@@ -547,7 +547,7 @@ class MainActivity : AppCompatActivity() {
                 Triple("Samsung Buds", samsungEasyPairBudsButton to samsungEasyPairBudsCircle, { EasySetupSpam(EasySetupDevice.type.BUDS) }),
                 Triple("Samsung Watch", samsungEasyPairWatchButton to samsungEasyPairWatchCircle, { EasySetupSpam(EasySetupDevice.type.WATCH) }),
                 Triple("Windows Swift Pair", windowsSwiftPairButton to windowsSwiftPairCircle, { SwiftPairSpam() }),
-                 Triple("Root Spam", rootSpamButton to rootSpamCircle, { RootSpam() })
+                 Triple("Root Spam", rootSpamButton to rootSpamCircle, { RootSpam(this) })
             )
 
             for (item in mapping) {
