@@ -232,11 +232,13 @@ class SpamService : Service() {
         val androidSpammers = listOf("Android Fast Pair", "Xiaomi Quick Connect", "Samsung Buds", "Samsung Watch")
         val windowsSpammers = listOf("Windows Swift Pair")
         val YandexSpammers = listOf("Yandex")
+        val rootSpammers = listOf("Root Spam")
 
         val activeIos = spammerList.filter { it in iosSpammers }
         val activeAndroid = spammerList.filter { it in androidSpammers }
         val activeWindows = spammerList.filter { it in windowsSpammers }
         val activeYandex = spammerList.filter { it in YandexSpammers }
+        val activeRoot = spammerList.filter { it in rootSpammers }
 
         val displayList = mutableListOf<String>()
 
@@ -259,6 +261,9 @@ class SpamService : Service() {
         if (activeYandex.isNotEmpty()) {
             displayList.add("Yandex")
         }
+        if (activeRoot.isNotEmpty()) {
+    displayList.add("Root")
+}
 
         val finalDisplay = if (activeIos.size == iosSpammers.size &&
             activeAndroid.size == androidSpammers.size &&
