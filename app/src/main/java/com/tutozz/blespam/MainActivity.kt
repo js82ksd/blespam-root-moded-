@@ -638,7 +638,7 @@ class MainActivity : AppCompatActivity() {
             onClickSpamButton(EasySetupSpam(EasySetupDevice.type.BUDS), "Samsung Buds", samsungEasyPairBudsButton, samsungEasyPairBudsCircle)
             onClickSpamButton(EasySetupSpam(EasySetupDevice.type.WATCH), "Samsung Watch", samsungEasyPairWatchButton, samsungEasyPairWatchCircle)
             onClickSpamButton(SwiftPairSpam(), "Windows Swift Pair", windowsSwiftPairButton, windowsSwiftPairCircle)
-            onClickSpamButton(RootSpam(), "Root Spam", rootSpamButton, rootSpamCircle)
+            onClickSpamButton(RootSpam(this), "Root Spam", rootSpamButton, rootSpamCircle)
         } catch (@Suppress("UNUSED_PARAMETER") e: IOException) {
             Toast.makeText(this, getString(R.string.swiftpair), Toast.LENGTH_SHORT).show()
         }
