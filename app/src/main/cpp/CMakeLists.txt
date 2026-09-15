@@ -7,6 +7,4 @@ target_link_libraries(${CMAKE_PROJECT_NAME} android log)
 target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
         -fvisibility=hidden -ffunction-sections -fdata-sections -O2 -DNDEBUG)
 target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -Wl,--gc-sections -Wl,--strip-all -Wl,-z,max-page-size=16384)
-# Сборка нативного helper для работы с HCI
-add_executable(hci_helper hci_helper.c)
-target_link_libraries(hci_helper bluetooth log)
+
