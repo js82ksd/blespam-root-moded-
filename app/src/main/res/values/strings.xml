@@ -180,4 +180,14 @@
     <string name="_20ms">20ms</string>
     <string name="root_title">Root (HCI)</string>
     <string name="root_spam">Root Spam</string>
+    <string name="bluetooth_enable_notification">Bluetooth is being enabled</string>
+    <string name="theme_dark_name">Dark</string>
+    <string name="theme_light_name">Light</string>
+    <string name="color_type_black">Black</string>
+    <string name="color_type_white">White</string>
+    <string name="low_contrast_message">Low contrast color selected</string>
+    <string name="low_contrast_title">Low Contrast</string>
+    <string name="low_contrast_yes">Yes</string>
+    <string name="low_contrast_no">No</string>
+    <string name="color_mode_material">Material</string>
 </resources>
