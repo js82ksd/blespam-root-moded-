@@ -185,7 +185,7 @@
     <string name="theme_light_name">Light</string>
     <string name="color_type_black">Black</string>
     <string name="color_type_white">White</string>
-    <string name="low_contrast_message">Low contrast color selected</string>
+  <string name="low_contrast_message">Warning: %1$s color on %2$s theme has low contrast.</string>
     <string name="low_contrast_title">Low Contrast</string>
     <string name="low_contrast_yes">Yes</string>
     <string name="low_contrast_no">No</string>
