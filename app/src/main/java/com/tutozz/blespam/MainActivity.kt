@@ -491,8 +491,7 @@ class MainActivity : AppCompatActivity() {
         androidFastPairCircle = findViewById(R.id.androidFastPairCircle)
         samsungEasyPairBudsButton = findViewById(R.id.samsungEasyPairBudsButton)
         samsungEasyPairBudsCircle = findViewById(R.id.samsungEasyPairBudsCircle)
-        xiaomiQuickConnectButton = findViewById(R.id.x
-                                                iaomiQuickConnectButton)
+        xiaomiQuickConnectButton = findViewById(R.id.xiaomiQuickConnectButton)
         xiaomiQuickConnectCircle = findViewById(R.id.XiaomiQuickConnectCircle)
         samsungEasyPairWatchButton = findViewById(R.id.samsungEasyPairWatchButton)
         samsungEasyPairWatchCircle = findViewById(R.id.samsungEasyPairWatchCircle)
