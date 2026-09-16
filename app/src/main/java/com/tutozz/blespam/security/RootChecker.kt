@@ -20,15 +20,21 @@ object RootChecker {
         return result
     }
 
-    private fun checkSu(): Boolean = try {
+    private fun checkSu(): Boolean {
+    return try {
         val p = ProcessBuilder("su", "-c", "id").redirectErrorStream(true).start()
-        if (!p.waitFor(3, TimeUnit.SECONDS)) { p.destroy(); return false }
+        if (!p.waitFor(3, TimeUnit.SECONDS)) {
+            p.destroy()
+            return false
+        }
         val out = BufferedReader(InputStreamReader(p.inputStream)).use { it.readText() }
+        Log.d(TAG, "su output: $out")
         out.contains("uid=0")
     } catch (e: Exception) {
-        Log.w(TAG, "su not found: ${e.message}"); false
+        Log.w(TAG, "su not found: ${e.message}")
+        false
     }
-
+}
     fun runAsRoot(command: String, timeoutSec: Long = 5): String? = try {
         val p = ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
         if (!p.waitFor(timeoutSec, TimeUnit.SECONDS)) { p.destroy(); null }
