@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <string name="low_contrast_message">Warning: %1$s color on %2$s theme has low contrast.</string>
     <string name="permission_granted">Permission granted</string>
     <string name="permission_required">Permission required</string>
     <string name="ok" translatable="false">ok</string>
@@ -192,7 +191,5 @@
     <string name="color_mode_material">Material</string>
 <string name="color_mode_classic">Classic</string>
 <string name="color_mode_custom">Custom</string>
-    <string name="low_contrast_message">Warning: %1$s color on %2$s theme has low contrast.</string>
-    <string name="color_mode_classic">Classic</string>
-<string name="color_mode_custom">Custom</string>
+    
 </resources>
