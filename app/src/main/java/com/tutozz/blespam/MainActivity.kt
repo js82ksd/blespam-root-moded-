@@ -1776,3 +1776,4 @@ class MainActivity : AppCompatActivity() {
         private const val REQUEST_ALL_PERMISSIONS = 100
     }
 }
+
