@@ -334,15 +334,7 @@ class SpamService : Service() {
     
     private fun notifyExternalUi() {
         try {
-            // Update widget
-            val intent = Intent(this, SpammerWidgetProvider::class.java).apply {
-                action = AppWidgetManager.ACTION_APPWIDGET_UPDATE
-            }
-            val ids = AppWidgetManager.getInstance(application).getAppWidgetIds(
-                ComponentName(application, SpammerWidgetProvider::class.java)
-            )
-            intent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
-            sendBroadcast(intent)
+            // Widget removed
 
             // Update QS Tiles
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
