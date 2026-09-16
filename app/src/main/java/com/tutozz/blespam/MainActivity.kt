@@ -87,6 +87,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var appleActionModalCircle: ImageView
     private lateinit var appleDevicePopupButton: MaterialButton
     private lateinit var appleDevicePopupCircle: ImageView
+   
     private lateinit var appleNotYourDevicePopupButton: MaterialButton
     private lateinit var appleNotYourDevicePopupCircle: ImageView
     private lateinit var vzhuhSpamButton: MaterialButton
@@ -96,8 +97,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var xiaomiQuickConnectButton: MaterialButton
     private lateinit var xiaomiQuickConnectCircle: ImageView
     private lateinit var samsungEasyPairBudsButton: MaterialButton
+    
     private lateinit var samsungEasyPairBudsCircle: ImageView
-    private lateinit var samsungEasyPairWatchButton: MaterialButton
+    private lateinit var samsungEasyPairWatchButton: MaterialButton    
     private lateinit var samsungEasyPairWatchCircle: ImageView
     private lateinit var windowsSwiftPairButton: MaterialButton
     private lateinit var windowsSwiftPairCircle: ImageView
