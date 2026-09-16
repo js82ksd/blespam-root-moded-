@@ -174,8 +174,8 @@ class SpamService : Service() {
                 SpammerWrapper(SwiftPairSpam())
             "Yandex" ->
                 SpammerWrapper(YandexSpam())
-            "Root Spam" ->
-                SpammerWrapper(RootSpam())                    
+          "Root Spam" ->
+    SpammerWrapper(RootSpam(applicationContext))                    
             else -> null
         }
     }
