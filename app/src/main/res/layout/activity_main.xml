@@ -276,6 +276,72 @@
                     tools:ignore="ImageContrastCheck" />
             </FrameLayout>
 
+            <!-- Vzhuh Spam -->
+            <FrameLayout
+                android:id="@+id/vzhuhButtonLayout"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="5dp">
+
+                <Button
+                    android:id="@+id/vzhuhSpamButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="60dp"
+                    android:layout_marginEnd="5dp"
+                    android:backgroundTint="@color/empty"
+                    android:paddingStart="15dp"
+                    android:paddingEnd="35dp"
+                    android:text="@string/vzhuh_popup"
+                    android:fontFamily="@font/notosans_extrabold"
+                    android:textColor="@color/black" />
+
+                <ImageView
+                    android:id="@+id/vzhuhSpamCircle"
+                    android:layout_width="10dp"
+                    android:layout_height="10dp"
+                    android:layout_gravity="top|end"
+                    android:layout_marginTop="26dp"
+                    android:layout_marginEnd="20dp"
+                    android:contentDescription="@string/blink_indicator"
+                    android:elevation="10dp"
+                    android:src="@drawable/grey_circle"
+                    tools:ignore="ImageContrastCheck" />
+            </FrameLayout>
+
+            <!-- Xiaomi Quick Connect -->
+            <FrameLayout
+                android:id="@+id/XiaomiQuickConnectButtonLayout"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="5dp">
+
+                <Button
+                    android:id="@+id/XiaomiQuickConnectButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="60dp"
+                    android:layout_marginEnd="5dp"
+                    android:backgroundTint="@color/empty"
+                    android:paddingStart="15dp"
+                    android:paddingEnd="35dp"
+                    android:text="@string/xiaomiquickconnect"
+                    android:fontFamily="@font/notosans_extrabold"
+                    android:textColor="@color/black" />
+
+                <ImageView
+                    android:id="@+id/XiaomiQuickConnectCircle"
+                    android:layout_width="10dp"
+                    android:layout_height="10dp"
+                    android:layout_gravity="top|end"
+                    android:layout_marginTop="26dp"
+                    android:layout_marginEnd="20dp"
+                    android:contentDescription="@string/blink_indicator"
+                    android:elevation="10dp"
+                    android:src="@drawable/grey_circle"
+                    tools:ignore="ImageContrastCheck" />
+            </FrameLayout>
+
+
+            
             <!-- Windows SwiftPair -->
             <TextView
                 android:id="@+id/windowsTitle"
